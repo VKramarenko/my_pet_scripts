@@ -1,17 +1,27 @@
 """Dash UI for the ToyOption calibration tool.
 
-Run:  python -m ToyOption.app
+Run from repo root:   python -m ToyOption.app
+Run directly:         python ToyOption/app.py
 """
 
 from __future__ import annotations
+import sys
+from pathlib import Path
+
+_pkg_dir = Path(__file__).resolve().parent
+_root = _pkg_dir.parent
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
+
+import base64
 import json
 import dash
 from dash import dcc, html, dash_table, Input, Output, State, callback, no_update
 import plotly.graph_objects as go
 import numpy as np
 
-from .data import CanonicalQuoteSet
-from .service import ModelService
+from ToyOption.data import CanonicalQuoteSet
+from ToyOption.service import ModelService
 
 # ---------------------------------------------------------------------------
 # Globals
@@ -122,8 +132,31 @@ def build_layout():
                 html.Button("+ Add put", id="btn-add-put", n_clicks=0,
                             style={"marginBottom": "12px", "fontSize": "12px"}),
 
+                # --- CSV Upload ---
+                dcc.Upload(
+                    id="upload-csv",
+                    children=html.Button("Upload CSV",
+                                         style={"width": "100%", "marginTop": "8px",
+                                                "cursor": "pointer"}),
+                    accept=".csv",
+                ),
+                html.Div(id="upload-status",
+                         style={"fontSize": "12px", "color": "#666",
+                                "marginTop": "4px"}),
+
                 html.Button("Load Example", id="btn-example", n_clicks=0,
                             style={"width": "100%", "marginTop": "8px"}),
+
+                html.Div([
+                    dcc.Input(id="input-filename", type="text",
+                              value="toy_option_data.csv",
+                              placeholder="filename.csv",
+                              style={"width": "calc(100% - 8px)", "marginBottom": "4px",
+                                     "fontSize": "12px"}),
+                    html.Button("Save to CSV", id="btn-save-csv", n_clicks=0,
+                                style={"width": "100%", "cursor": "pointer"}),
+                ], style={"marginTop": "8px"}),
+                dcc.Download(id="download-csv"),
             ], style={"width": "22%", "padding": "12px", "verticalAlign": "top",
                        "display": "inline-block", "borderRight": "1px solid #ddd"}),
 
@@ -161,8 +194,7 @@ def build_layout():
 
             # ---- RIGHT: Plots ----
             html.Div([
-                dcc.Graph(id="graph-calls", style={"height": "300px"}),
-                dcc.Graph(id="graph-puts", style={"height": "300px"}),
+                dcc.Graph(id="graph-prices", style={"height": "420px"}),
                 dcc.Graph(id="graph-residuals", style={"height": "250px"}),
                 html.Div(id="noarb-text",
                          style={"whiteSpace": "pre-wrap", "fontFamily": "monospace",
@@ -180,7 +212,7 @@ def build_layout():
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
-app = dash.Dash(__name__)
+app = dash.Dash(__name__, suppress_callback_exceptions=True)
 app.layout = build_layout
 
 # ---------------------------------------------------------------------------
@@ -204,6 +236,42 @@ def add_put_row(n, rows):
     rows.append({"K": "", "price": ""})
     return rows
 
+# ---- Upload CSV ----
+@callback(
+    Output("input-F", "value", allow_duplicate=True),
+    Output("input-T", "value", allow_duplicate=True),
+    Output("table-calls", "data", allow_duplicate=True),
+    Output("table-puts", "data", allow_duplicate=True),
+    Output("upload-status", "children"),
+    Input("upload-csv", "contents"),
+    State("upload-csv", "filename"),
+    prevent_initial_call=True,
+)
+def upload_csv(contents, filename):
+    if contents is None:
+        return no_update, no_update, no_update, no_update, ""
+    try:
+        # Dash uploads are base64-encoded
+        _, content_b64 = contents.split(",", 1)
+        decoded = base64.b64decode(content_b64).decode("utf-8")
+        # Write to a temp file so from_csv can parse it
+        import tempfile, os
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".csv",
+                                          delete=False, encoding="utf-8")
+        tmp.write(decoded)
+        tmp.close()
+        try:
+            qs = CanonicalQuoteSet.from_csv(tmp.name)
+        finally:
+            os.unlink(tmp.name)
+
+        call_rows = [{"K": k, "price": p} for k, p, _ in qs.calls]
+        put_rows = [{"K": k, "price": p} for k, p, _ in qs.puts]
+        return qs.F, qs.T, call_rows, put_rows, f"Loaded {filename}"
+    except Exception as e:
+        return no_update, no_update, no_update, no_update, f"Error: {e}"
+
+
 # Load example
 @callback(
     Output("input-F", "value"),
@@ -220,6 +288,36 @@ def load_example(n):
         [{"K": r["K"], "price": r["price"]} for r in EXAMPLE_DATA["calls"]],
         [{"K": r["K"], "price": r["price"]} for r in EXAMPLE_DATA["puts"]],
     )
+
+
+# ---- Save to CSV ----
+@callback(
+    Output("download-csv", "data"),
+    Input("btn-save-csv", "n_clicks"),
+    State("input-F", "value"),
+    State("input-T", "value"),
+    State("table-calls", "data"),
+    State("table-puts", "data"),
+    State("input-filename", "value"),
+    prevent_initial_call=True,
+)
+def save_csv(n, F, T, call_rows, put_rows, filename):
+    lines = [f"F,{F}", f"T,{T}", "type,K,price,weight"]
+    for r in call_rows:
+        try:
+            lines.append(f"call,{float(r['K'])},{float(r['price'])},1.0")
+        except (ValueError, TypeError, KeyError):
+            pass
+    for r in put_rows:
+        try:
+            lines.append(f"put,{float(r['K'])},{float(r['price'])},1.0")
+        except (ValueError, TypeError, KeyError):
+            pass
+    content = "\n".join(lines) + "\n"
+    fname = (filename or "toy_option_data").strip()
+    if not fname.endswith(".csv"):
+        fname += ".csv"
+    return dict(content=content, filename=fname)
 
 
 def _read_params_from_inputs(param_values):
@@ -306,8 +404,7 @@ def sync_params_to_controls(params_json):
 
 # ---- Main plot update (on any input/slider change) ----
 @callback(
-    Output("graph-calls", "figure"),
-    Output("graph-puts", "figure"),
+    Output("graph-prices", "figure"),
     Output("graph-residuals", "figure"),
     Output("noarb-text", "children"),
     Input({"type": "param-input", "index": dash.ALL}, "value"),
@@ -330,11 +427,11 @@ def update_plots(param_inputs, param_sliders, F, T, call_rows, put_rows):
     try:
         params = np.array([float(v) for v in param_values])
     except (TypeError, ValueError):
-        return no_update, no_update, no_update, no_update
+        return no_update, no_update, no_update
 
     qs = _build_quote_set(F, T, call_rows, put_rows)
     if qs is None:
-        return _empty_fig("Calls"), _empty_fig("Puts"), _empty_fig("Residuals"), "No data"
+        return _empty_fig("Prices"), _empty_fig("Residuals"), "No data"
 
     svc.set_data(qs)
     svc.set_params(params)
@@ -342,42 +439,44 @@ def update_plots(param_inputs, param_sliders, F, T, call_rows, put_rows):
 
     K_grid = payload["K_grid"]
     fwd = payload["F"]
-
-    # ---- Call chart ----
-    fig_call = go.Figure()
-    fig_call.add_trace(go.Scatter(
-        x=K_grid, y=payload["call_curve"], mode="lines", name="Model",
-        line={"color": "#1f77b4", "width": 2},
-    ))
     mc = payload["market_calls"]
-    if len(mc["K"]):
-        fig_call.add_trace(go.Scatter(
-            x=mc["K"], y=mc["P"], mode="markers", name="Market",
-            marker={"color": "red", "size": 9, "symbol": "circle"},
-        ))
-    fig_call.add_vline(x=fwd, line_dash="dash", line_color="gray",
-                       annotation_text="F")
-    fig_call.update_layout(title="Call prices", xaxis_title="Strike",
-                           yaxis_title="Price", margin=dict(t=40, b=30),
-                           legend=dict(x=0.8, y=1))
-
-    # ---- Put chart ----
-    fig_put = go.Figure()
-    fig_put.add_trace(go.Scatter(
-        x=K_grid, y=payload["put_curve"], mode="lines", name="Model",
-        line={"color": "#ff7f0e", "width": 2},
-    ))
     mp = payload["market_puts"]
-    if len(mp["K"]):
-        fig_put.add_trace(go.Scatter(
-            x=mp["K"], y=mp["P"], mode="markers", name="Market",
-            marker={"color": "red", "size": 9, "symbol": "circle"},
+
+    # ---- Combined price chart (calls + puts) ----
+    fig_prices = go.Figure()
+    # Model curves
+    fig_prices.add_trace(go.Scatter(
+        x=K_grid, y=payload["call_curve"], mode="lines",
+        name="Call (model)", line={"color": "#1f77b4", "width": 2},
+    ))
+    fig_prices.add_trace(go.Scatter(
+        x=K_grid, y=payload["put_curve"], mode="lines",
+        name="Put (model)", line={"color": "#ff7f0e", "width": 2},
+    ))
+    # Market points
+    if len(mc["K"]):
+        fig_prices.add_trace(go.Scatter(
+            x=mc["K"], y=mc["P"], mode="markers",
+            name="Call (market)",
+            marker={"color": "#1f77b4", "size": 10, "symbol": "circle",
+                    "line": {"color": "white", "width": 1.5}},
         ))
-    fig_put.add_vline(x=fwd, line_dash="dash", line_color="gray",
-                      annotation_text="F")
-    fig_put.update_layout(title="Put prices", xaxis_title="Strike",
-                          yaxis_title="Price", margin=dict(t=40, b=30),
-                          legend=dict(x=0.8, y=1))
+    if len(mp["K"]):
+        fig_prices.add_trace(go.Scatter(
+            x=mp["K"], y=mp["P"], mode="markers",
+            name="Put (market)",
+            marker={"color": "#ff7f0e", "size": 10, "symbol": "diamond",
+                    "line": {"color": "white", "width": 1.5}},
+        ))
+    fig_prices.add_vline(x=fwd, line_dash="dash", line_color="gray",
+                         annotation_text="F")
+    fig_prices.update_layout(
+        title="Option prices (Call & Put)",
+        xaxis_title="Strike",
+        yaxis_title="Price",
+        margin=dict(t=40, b=30),
+        legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.8)"),
+    )
 
     # ---- Residuals chart ----
     fig_res = go.Figure()
@@ -410,7 +509,7 @@ def update_plots(param_inputs, param_sliders, F, T, call_rows, put_rows):
         )
     noarb_text = "\n".join(noarb_lines) if noarb_lines else ""
 
-    return fig_call, fig_put, fig_res, noarb_text
+    return fig_prices, fig_res, noarb_text
 
 
 def _empty_fig(title: str) -> go.Figure:

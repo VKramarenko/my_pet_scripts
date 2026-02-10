@@ -1,15 +1,26 @@
 """Example: load CSV, calibrate, print results.
 
-Run:  python -m ToyOption.example
+Run from repo root:   python -m ToyOption.example
+Run directly:         python ToyOption/example.py
 """
 
-from .data import CanonicalQuoteSet
-from .service import ModelService
+import sys
+from pathlib import Path
+
+# Allow running both as `python example.py` and `python -m ToyOption.example`
+_pkg_dir = Path(__file__).resolve().parent
+_root = _pkg_dir.parent
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
+
+from ToyOption.data import CanonicalQuoteSet
+from ToyOption.service import ModelService
 
 
 def main():
-    # 1. Load data from CSV
-    qs = CanonicalQuoteSet.from_csv("ToyOption/example_data.csv")
+    # 1. Load data from CSV (resolve path relative to this file)
+    csv_path = _pkg_dir / "example_data.csv"
+    qs = CanonicalQuoteSet.from_csv(csv_path)
     print(f"Loaded: F={qs.F}, T={qs.T}, {len(qs.calls)} calls, {len(qs.puts)} puts\n")
 
     # 2. Set up service and calibrate
