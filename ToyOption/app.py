@@ -219,6 +219,21 @@ app.layout = build_layout
 # Callbacks
 # ---------------------------------------------------------------------------
 
+# ---- Switch model ----
+@callback(
+    Output("param-controls", "children"),
+    Output("store-params-json", "data", allow_duplicate=True),
+    Output("metrics-text", "children", allow_duplicate=True),
+    Input("dropdown-model", "value"),
+    prevent_initial_call=True,
+)
+def switch_model(model_name):
+    svc.set_model(model_name)
+    controls = _make_param_controls(svc.model)
+    params_json = json.dumps([round(float(v), 6) for v in svc.params])
+    return controls, params_json, ""
+
+
 # Add row buttons
 @callback(Output("table-calls", "data", allow_duplicate=True),
           Input("btn-add-call", "n_clicks"),
