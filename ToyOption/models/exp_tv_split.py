@@ -48,6 +48,46 @@ class ExpTimeValueSplitModel(ModelPlugin):
     def _tv(x: np.ndarray, a: float, b: float, c: float) -> np.ndarray:
         return a * np.exp(-b * np.abs(x)) + c
 
+    def apply_reaction(
+        self,
+        params: np.ndarray,
+        side: str,
+        atm_component: float,
+        wing_component: float,
+        strikes: np.ndarray,
+        F: float,
+    ) -> np.ndarray:
+        new_params = params.copy()
+        ac, bc, cc, ap, bp, cp = new_params
+
+        if side == "call":
+            a, b, c = ac, bc, cc
+            wing_K = float(strikes.max())
+        else:
+            a, b, c = ap, bp, cp
+            wing_K = float(strikes.min())
+
+        # Step 1: ATM shift — adjust c
+        c_new = c + atm_component
+
+        # Step 2: Wing shift — find b analytically
+        x_wing = abs(np.log(wing_K / F))
+        b_new = b
+        if x_wing > 1e-12 and abs(wing_component) > 1e-12:
+            val = np.exp(-b * x_wing) + wing_component / a
+            if val > 1e-8 and val < 1.0:
+                b_new = -np.log(val) / x_wing
+            # Clamp to bounds
+            bounds = self.bounds()
+            b_idx = 1 if side == "call" else 4
+            b_new = np.clip(b_new, bounds[b_idx][0], bounds[b_idx][1])
+
+        if side == "call":
+            new_params = np.array([a, b_new, c_new, ap, bp, cp])
+        else:
+            new_params = np.array([ac, bc, cc, a, b_new, c_new])
+        return new_params
+
     def price(
         self,
         option_type: str,

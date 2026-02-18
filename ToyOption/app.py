@@ -22,6 +22,8 @@ import numpy as np
 
 from ToyOption.data import CanonicalQuoteSet
 from ToyOption.service import ModelService
+from ToyOption.emulator import Trade, ReactionConfig, COMBINATION_MODELS
+from ToyOption.black76 import implied_vols_from_prices
 
 # ---------------------------------------------------------------------------
 # Globals
@@ -189,6 +191,75 @@ def build_layout():
                          style={"whiteSpace": "pre-wrap", "fontFamily": "monospace",
                                 "fontSize": "13px", "backgroundColor": "#f8f8f8",
                                 "padding": "8px", "borderRadius": "4px"}),
+
+                # ---- Reaction Emulator ----
+                html.Hr(style={"marginTop": "20px"}),
+                html.H4("Reaction Emulator"),
+                html.Div([
+                    html.Label("Combination Model"),
+                    dcc.Dropdown(
+                        id="dropdown-reaction-mode",
+                        options=[{"label": n, "value": n} for n in COMBINATION_MODELS],
+                        value="Linear",
+                        clearable=False,
+                    ),
+                ], style={"marginBottom": "8px"}),
+                html.Div([
+                    html.Label("shift_atm"),
+                    dcc.Input(id="input-shift-atm", type="number", value=1.0,
+                              step=0.1, style={"width": "100%"}),
+                ], style={"marginBottom": "6px"}),
+                html.Div([
+                    html.Label("shift_wing"),
+                    dcc.Input(id="input-shift-wing", type="number", value=1.0,
+                              step=0.1, style={"width": "100%"}),
+                ], style={"marginBottom": "6px"}),
+                html.Div([
+                    html.Label("volume_ref"),
+                    dcc.Input(id="input-volume-ref", type="number", value=100.0,
+                              step=10, style={"width": "100%"}),
+                ], style={"marginBottom": "10px"}),
+
+                html.H5("Trades"),
+                dash_table.DataTable(
+                    id="table-trades",
+                    columns=[
+                        {"name": "Side", "id": "side", "presentation": "dropdown", "editable": True},
+                        {"name": "Strike", "id": "strike", "type": "numeric", "editable": True},
+                        {"name": "Volume", "id": "volume", "type": "numeric", "editable": True},
+                        {"name": "Direction", "id": "direction", "presentation": "dropdown", "editable": True},
+                    ],
+                    data=[],
+                    editable=True,
+                    row_deletable=True,
+                    dropdown={
+                        "side": {"options": [
+                            {"label": "call", "value": "call"},
+                            {"label": "put", "value": "put"},
+                        ]},
+                        "direction": {"options": [
+                            {"label": "buy", "value": "buy"},
+                            {"label": "sell", "value": "sell"},
+                        ]},
+                    },
+                    style_table={"marginBottom": "8px"},
+                    style_cell={"textAlign": "center", "padding": "4px", "fontSize": "12px"},
+                ),
+                html.Button("+ Add trade", id="btn-add-trade", n_clicks=0,
+                            style={"fontSize": "12px", "marginRight": "6px"}),
+                html.Div([
+                    html.Button("Apply Trades", id="btn-apply-trades", n_clicks=0,
+                                style={"marginRight": "8px", "fontWeight": "bold",
+                                        "backgroundColor": "#2196F3", "color": "white",
+                                        "border": "none", "padding": "8px 16px",
+                                        "cursor": "pointer"}),
+                    html.Button("Reset Emulator", id="btn-reset-emulator", n_clicks=0,
+                                style={"padding": "8px 16px", "cursor": "pointer"}),
+                ], style={"marginTop": "8px", "marginBottom": "8px"}),
+                html.Div(id="emulator-status",
+                         style={"whiteSpace": "pre-wrap", "fontFamily": "monospace",
+                                "fontSize": "12px", "color": "#666",
+                                "marginTop": "4px"}),
             ], style={"width": "26%", "padding": "12px", "verticalAlign": "top",
                        "display": "inline-block", "borderRight": "1px solid #ddd"}),
 
@@ -196,6 +267,7 @@ def build_layout():
             html.Div([
                 dcc.Graph(id="graph-prices", style={"height": "420px"}),
                 dcc.Graph(id="graph-residuals", style={"height": "250px"}),
+                dcc.Graph(id="graph-iv", style={"height": "350px"}),
                 html.Div(id="noarb-text",
                          style={"whiteSpace": "pre-wrap", "fontFamily": "monospace",
                                 "fontSize": "12px", "padding": "8px",
@@ -204,8 +276,9 @@ def build_layout():
                        "display": "inline-block"}),
         ], style={"display": "flex", "alignItems": "flex-start"}),
 
-        # Hidden store for triggering updates
+        # Hidden stores for triggering updates
         dcc.Store(id="store-params-json"),
+        dcc.Store(id="store-base-params-json"),
     ])
 
 
@@ -402,6 +475,100 @@ def reset_params(n):
     return json.dumps([round(float(v), 6) for v in svc.params])
 
 
+# ---- Add trade row ----
+@callback(
+    Output("table-trades", "data", allow_duplicate=True),
+    Input("btn-add-trade", "n_clicks"),
+    State("table-trades", "data"),
+    prevent_initial_call=True,
+)
+def add_trade_row(n, rows):
+    rows.append({"side": "call", "strike": 100, "volume": 100, "direction": "buy"})
+    return rows
+
+
+# ---- Apply trades ----
+@callback(
+    Output("store-params-json", "data", allow_duplicate=True),
+    Output("store-base-params-json", "data"),
+    Output("emulator-status", "children"),
+    Input("btn-apply-trades", "n_clicks"),
+    State("input-F", "value"),
+    State("input-T", "value"),
+    State("table-calls", "data"),
+    State("table-puts", "data"),
+    State("table-trades", "data"),
+    State("dropdown-reaction-mode", "value"),
+    State("input-shift-atm", "value"),
+    State("input-shift-wing", "value"),
+    State("input-volume-ref", "value"),
+    State({"type": "param-input", "index": dash.ALL}, "value"),
+    prevent_initial_call=True,
+)
+def apply_trades(n, F, T, call_rows, put_rows, trade_rows,
+                 combo_model, shift_atm, shift_wing, volume_ref, param_values):
+    qs = _build_quote_set(F, T, call_rows, put_rows)
+    if qs is None:
+        return no_update, no_update, "No valid data points"
+
+    # Parse trades
+    trades = []
+    for r in trade_rows:
+        try:
+            t = Trade(
+                side=r["side"],
+                strike=float(r["strike"]),
+                volume=float(r["volume"]),
+                direction=r["direction"],
+            )
+            trades.append(t)
+        except (ValueError, TypeError, KeyError):
+            pass
+
+    if not trades:
+        return no_update, no_update, "No valid trades to apply"
+
+    # Setup
+    svc.set_data(qs)
+    svc.set_params(_read_params_from_inputs(param_values))
+
+    config = ReactionConfig(
+        shift_atm=float(shift_atm if shift_atm is not None else 1.0),
+        shift_wing=float(shift_wing or 1.0),
+        volume_ref=float(volume_ref or 100.0),
+        combination_model=combo_model,
+    )
+    svc.init_emulator(config)
+    base_json = json.dumps([round(float(v), 6) for v in svc.base_params])
+
+    # Apply each trade cumulatively
+    log_lines = []
+    for i, t in enumerate(trades, 1):
+        try:
+            svc.apply_trade(t)
+            log_lines.append(f"#{i} {t.direction} {t.side} K={t.strike} v={t.volume} -> OK")
+        except Exception as e:
+            log_lines.append(f"#{i} {t.direction} {t.side} K={t.strike} v={t.volume} -> ERR: {e}")
+
+    params_json = json.dumps([round(float(v), 6) for v in svc.params])
+    status = f"Combination: {combo_model}\n" + "\n".join(log_lines)
+    return params_json, base_json, status
+
+
+# ---- Reset emulator ----
+@callback(
+    Output("store-params-json", "data", allow_duplicate=True),
+    Output("store-base-params-json", "data", allow_duplicate=True),
+    Output("emulator-status", "children", allow_duplicate=True),
+    Input("btn-reset-emulator", "n_clicks"),
+    prevent_initial_call=True,
+)
+def reset_emulator(n):
+    svc.reset_emulator()
+    params_json = json.dumps([round(float(v), 6) for v in svc.params])
+    return params_json, None, "Emulator reset to base params"
+
+
 # ---- Sync store -> sliders/inputs ----
 @callback(
     Output({"type": "param-input", "index": dash.ALL}, "value"),
@@ -421,6 +588,7 @@ def sync_params_to_controls(params_json):
 @callback(
     Output("graph-prices", "figure"),
     Output("graph-residuals", "figure"),
+    Output("graph-iv", "figure"),
     Output("noarb-text", "children"),
     Input({"type": "param-input", "index": dash.ALL}, "value"),
     Input({"type": "param-slider", "index": dash.ALL}, "value"),
@@ -428,8 +596,9 @@ def sync_params_to_controls(params_json):
     Input("input-T", "value"),
     Input("table-calls", "data"),
     Input("table-puts", "data"),
+    State("store-base-params-json", "data"),
 )
-def update_plots(param_inputs, param_sliders, F, T, call_rows, put_rows):
+def update_plots(param_inputs, param_sliders, F, T, call_rows, put_rows, base_params_json):
     # Determine which triggered — prefer sliders for smooth interaction
     ctx = dash.callback_context
     if not ctx.triggered:
@@ -442,11 +611,12 @@ def update_plots(param_inputs, param_sliders, F, T, call_rows, put_rows):
     try:
         params = np.array([float(v) for v in param_values])
     except (TypeError, ValueError):
-        return no_update, no_update, no_update
+        return no_update, no_update, no_update, no_update
 
     qs = _build_quote_set(F, T, call_rows, put_rows)
     if qs is None:
-        return _empty_fig("Prices"), _empty_fig("Residuals"), "No data"
+        return (_empty_fig("Prices"), _empty_fig("Residuals"),
+                _empty_fig("Implied Volatility"), "No data")
 
     svc.set_data(qs)
     svc.set_params(params)
@@ -454,6 +624,7 @@ def update_plots(param_inputs, param_sliders, F, T, call_rows, put_rows):
 
     K_grid = payload["K_grid"]
     fwd = payload["F"]
+    T_val = float(T)
     mc = payload["market_calls"]
     mp = payload["market_puts"]
 
@@ -483,14 +654,46 @@ def update_plots(param_inputs, param_sliders, F, T, call_rows, put_rows):
             marker={"color": "#ff7f0e", "size": 10, "symbol": "diamond",
                     "line": {"color": "white", "width": 1.5}},
         ))
+    # Model prices at user strikes (to see how model fits the given points)
+    if len(mc["K"]):
+        model_call_at_K = svc.model.vectorized_price("call", mc["K"], fwd, T_val, svc.params)
+        fig_prices.add_trace(go.Scatter(
+            x=mc["K"], y=model_call_at_K, mode="markers",
+            name="Call (model@strikes)",
+            marker={"color": "#1f77b4", "size": 8, "symbol": "x",
+                    "line": {"width": 2}},
+        ))
+    if len(mp["K"]):
+        model_put_at_K = svc.model.vectorized_price("put", mp["K"], fwd, T_val, svc.params)
+        fig_prices.add_trace(go.Scatter(
+            x=mp["K"], y=model_put_at_K, mode="markers",
+            name="Put (model@strikes)",
+            marker={"color": "#ff7f0e", "size": 8, "symbol": "x",
+                    "line": {"width": 2}},
+        ))
+    # Base curves (pre-trade) as dashed lines
+    if base_params_json is not None:
+        base_curves = svc.evaluate_base_curves()
+        if base_curves is not None:
+            fig_prices.add_trace(go.Scatter(
+                x=base_curves["K_grid"], y=base_curves["call_curve"], mode="lines",
+                name="Call (base)", line={"color": "#1f77b4", "width": 1, "dash": "dash"},
+                opacity=0.5,
+            ))
+            fig_prices.add_trace(go.Scatter(
+                x=base_curves["K_grid"], y=base_curves["put_curve"], mode="lines",
+                name="Put (base)", line={"color": "#ff7f0e", "width": 1, "dash": "dash"},
+                opacity=0.5,
+            ))
+
     fig_prices.add_vline(x=fwd, line_dash="dash", line_color="gray",
                          annotation_text="F")
     fig_prices.update_layout(
         title="Option prices (Call & Put)",
         xaxis_title="Strike",
         yaxis_title="Price",
-        margin=dict(t=40, b=30),
-        legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.8)"),
+        margin=dict(t=40, b=80),
+        legend=dict(orientation="h", yanchor="top", y=-0.15, xanchor="left", x=0),
     )
 
     # ---- Residuals chart ----
@@ -511,6 +714,123 @@ def update_plots(param_inputs, param_sliders, F, T, call_rows, put_rows):
                           yaxis_title="Error", margin=dict(t=40, b=30),
                           barmode="group")
 
+    # ---- Implied Volatility chart ----
+    fig_iv = go.Figure()
+    if T_val > 0:
+        # Model IV curve (from model prices on K_grid)
+        # Use only OTM options for cleaner IV: calls for K > F, puts for K < F
+        call_mask = K_grid >= fwd
+        put_mask = K_grid <= fwd
+        if np.any(call_mask):
+            K_call_grid = K_grid[call_mask]
+            iv_call_curve = implied_vols_from_prices(
+                payload["call_curve"][call_mask], K_call_grid, fwd, T_val, "call"
+            )
+            valid = ~np.isnan(iv_call_curve)
+            if np.any(valid):
+                fig_iv.add_trace(go.Scatter(
+                    x=K_call_grid[valid], y=iv_call_curve[valid] * 100, mode="lines",
+                    name="Call IV (model)", line={"color": "#1f77b4", "width": 2},
+                ))
+        if np.any(put_mask):
+            K_put_grid = K_grid[put_mask]
+            iv_put_curve = implied_vols_from_prices(
+                payload["put_curve"][put_mask], K_put_grid, fwd, T_val, "put"
+            )
+            valid = ~np.isnan(iv_put_curve)
+            if np.any(valid):
+                fig_iv.add_trace(go.Scatter(
+                    x=K_put_grid[valid], y=iv_put_curve[valid] * 100, mode="lines",
+                    name="Put IV (model)", line={"color": "#ff7f0e", "width": 2},
+                ))
+        # Market IV at user strikes
+        if len(mc["K"]):
+            iv_call_mkt = implied_vols_from_prices(mc["P"], mc["K"], fwd, T_val, "call")
+            valid = ~np.isnan(iv_call_mkt)
+            if np.any(valid):
+                fig_iv.add_trace(go.Scatter(
+                    x=mc["K"][valid], y=iv_call_mkt[valid] * 100, mode="markers",
+                    name="Call IV (market)",
+                    marker={"color": "#1f77b4", "size": 10, "symbol": "circle",
+                            "line": {"color": "white", "width": 1.5}},
+                ))
+        if len(mp["K"]):
+            iv_put_mkt = implied_vols_from_prices(mp["P"], mp["K"], fwd, T_val, "put")
+            valid = ~np.isnan(iv_put_mkt)
+            if np.any(valid):
+                fig_iv.add_trace(go.Scatter(
+                    x=mp["K"][valid], y=iv_put_mkt[valid] * 100, mode="markers",
+                    name="Put IV (market)",
+                    marker={"color": "#ff7f0e", "size": 10, "symbol": "diamond",
+                            "line": {"color": "white", "width": 1.5}},
+                ))
+        # Model IV at user strikes
+        if len(mc["K"]):
+            model_call_prices = svc.model.vectorized_price("call", mc["K"], fwd, T_val, svc.params)
+            iv_call_model = implied_vols_from_prices(model_call_prices, mc["K"], fwd, T_val, "call")
+            valid = ~np.isnan(iv_call_model)
+            if np.any(valid):
+                fig_iv.add_trace(go.Scatter(
+                    x=mc["K"][valid], y=iv_call_model[valid] * 100, mode="markers",
+                    name="Call IV (model@strikes)",
+                    marker={"color": "#1f77b4", "size": 8, "symbol": "x",
+                            "line": {"width": 2}},
+                ))
+        if len(mp["K"]):
+            model_put_prices = svc.model.vectorized_price("put", mp["K"], fwd, T_val, svc.params)
+            iv_put_model = implied_vols_from_prices(model_put_prices, mp["K"], fwd, T_val, "put")
+            valid = ~np.isnan(iv_put_model)
+            if np.any(valid):
+                fig_iv.add_trace(go.Scatter(
+                    x=mp["K"][valid], y=iv_put_model[valid] * 100, mode="markers",
+                    name="Put IV (model@strikes)",
+                    marker={"color": "#ff7f0e", "size": 8, "symbol": "x",
+                            "line": {"width": 2}},
+                ))
+        # Base IV curves (pre-trade) as dashed lines
+        if base_params_json is not None:
+            base_curves = svc.evaluate_base_curves()
+            if base_curves is not None:
+                bK = base_curves["K_grid"]
+                bc_mask = bK >= fwd
+                bp_mask = bK <= fwd
+                if np.any(bc_mask):
+                    bK_call = bK[bc_mask]
+                    iv_base_call = implied_vols_from_prices(
+                        base_curves["call_curve"][bc_mask], bK_call, fwd, T_val, "call"
+                    )
+                    valid = ~np.isnan(iv_base_call)
+                    if np.any(valid):
+                        fig_iv.add_trace(go.Scatter(
+                            x=bK_call[valid], y=iv_base_call[valid] * 100, mode="lines",
+                            name="Call IV (base)",
+                            line={"color": "#1f77b4", "width": 1, "dash": "dash"},
+                            opacity=0.5,
+                        ))
+                if np.any(bp_mask):
+                    bK_put = bK[bp_mask]
+                    iv_base_put = implied_vols_from_prices(
+                        base_curves["put_curve"][bp_mask], bK_put, fwd, T_val, "put"
+                    )
+                    valid = ~np.isnan(iv_base_put)
+                    if np.any(valid):
+                        fig_iv.add_trace(go.Scatter(
+                            x=bK_put[valid], y=iv_base_put[valid] * 100, mode="lines",
+                            name="Put IV (base)",
+                            line={"color": "#ff7f0e", "width": 1, "dash": "dash"},
+                            opacity=0.5,
+                        ))
+
+    fig_iv.add_vline(x=fwd, line_dash="dash", line_color="gray",
+                     annotation_text="F")
+    fig_iv.update_layout(
+        title="Implied Volatility (Black-76)",
+        xaxis_title="Strike",
+        yaxis_title="IV (%)",
+        margin=dict(t=40, b=80),
+        legend=dict(orientation="h", yanchor="top", y=-0.15, xanchor="left", x=0),
+    )
+
     # ---- No-arb text ----
     noarb_lines = []
     for chk in payload.get("noarb", []):
@@ -524,7 +844,7 @@ def update_plots(param_inputs, param_sliders, F, T, call_rows, put_rows):
         )
     noarb_text = "\n".join(noarb_lines) if noarb_lines else ""
 
-    return fig_prices, fig_res, noarb_text
+    return fig_prices, fig_res, fig_iv, noarb_text
 
 
 def _empty_fig(title: str) -> go.Figure:

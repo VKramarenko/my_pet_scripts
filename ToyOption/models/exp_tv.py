@@ -48,6 +48,38 @@ class ExpTimeValueModel(ModelPlugin):
     def _tv(x: np.ndarray, a: float, b: float, c: float, d: float) -> np.ndarray:
         return a * np.exp(-b * np.abs(x - d)) + c
 
+    def apply_reaction(
+        self,
+        params: np.ndarray,
+        side: str,
+        atm_component: float,
+        wing_component: float,
+        strikes: np.ndarray,
+        F: float,
+    ) -> np.ndarray:
+        a, b, c, d = params
+
+        # Step 1: ATM shift — adjust c
+        c_new = c + atm_component
+
+        # Step 2: Wing shift — find b analytically (fix a, c, d)
+        if side == "call":
+            wing_K = float(strikes.max())
+        else:
+            wing_K = float(strikes.min())
+
+        x_wing = abs(np.log(wing_K / F) - d)
+        b_new = b
+        if x_wing > 1e-12 and abs(wing_component) > 1e-12:
+            val = np.exp(-b * x_wing) + wing_component / a
+            if val > 1e-8 and val < 1.0:
+                b_new = -np.log(val) / x_wing
+            # Clamp to bounds
+            b_lo, b_hi = self.bounds()[1]
+            b_new = np.clip(b_new, b_lo, b_hi)
+
+        return np.array([a, b_new, c_new, d])
+
     def price(
         self,
         option_type: str,

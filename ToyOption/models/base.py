@@ -57,3 +57,38 @@ class ModelPlugin(ABC):
         return np.array(
             [self.price(option_type, float(k), F, T, params) for k in K_array]
         )
+
+    def apply_reaction(
+        self,
+        params: np.ndarray,
+        side: str,
+        atm_component: float,
+        wing_component: float,
+        strikes: np.ndarray,
+        F: float,
+    ) -> np.ndarray:
+        """Analytically adjust model params for a trade reaction.
+
+        Parameters
+        ----------
+        params : np.ndarray
+            Current model parameters.
+        side : str
+            ``"call"`` or ``"put"``.
+        atm_component : float
+            Weighted ATM shift to apply (shift_atm_eff * weight_atm).
+        wing_component : float
+            Weighted wing shift to apply (shift_wing_eff * weight_wing).
+        strikes : np.ndarray
+            Strike array for the traded side.
+        F : float
+            Forward price.
+
+        Returns
+        -------
+        np.ndarray
+            New model parameters.
+        """
+        raise NotImplementedError(
+            f"{self.name} does not implement apply_reaction"
+        )
