@@ -297,6 +297,9 @@ class StrikeReactionEmulator:
             strikes, F,
         )
 
+        # Restore put-call parity on the non-traded side (no-op by default)
+        new_params = self.model.apply_parity_correction(new_params, side, quote_set)
+
         self.current_params = new_params.copy()
         self.trade_log.append({
             "side": side,

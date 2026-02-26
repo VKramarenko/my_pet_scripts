@@ -1,19 +1,23 @@
-"""Split exponential time-value model — independent TV for call and put.
+"""Exponential time-value model with a shared floor parameter.
 
-C(K) = max(F - K, 0) + TV_call(x; ac, bc, cc)
-P(K) = max(K - F, 0) + TV_put(x; ap, bp, cp)
+C(K) = max(F - K, 0) + ac * exp(-bc * |x|) + c
+P(K) = max(K - F, 0) + ap * exp(-bp * |x|) + c
 
 where  x = ln(K / F)
-       TV(x; a, b, c) = a * exp(-b * |x|) + c
+       c  — shared floor for both call and put
 
-Parameters (6 total)
---------------------
-ac, bc, cc : amplitude, decay, base level for calls
-ap, bp, cp : amplitude, decay, base level for puts
+Parameters
+----------
+ac : call TV amplitude  (> 0)
+bc : call decay rate    (> 0)
+ap : put  TV amplitude  (> 0)
+bp : put  decay rate    (> 0)
+c  : shared floor level (>= 0)
 
-Note: put-call parity is NOT built in — call and put TV are
-independent, so parity violations are possible and will show
-up in diagnostics.
+Trade reaction
+--------------
+ATM component  → shifts c (raises/lowers both call and put uniformly)
+Wing component → shifts bc for call trades, bp for put trades (shape only)
 """
 
 from __future__ import annotations
@@ -21,31 +25,32 @@ import numpy as np
 from .base import ModelPlugin
 
 
-class ExpTimeValueSplitModel(ModelPlugin):
+class ExpTimeValueSharedCModel(ModelPlugin):
 
     @property
     def name(self) -> str:
-        return "ExpTimeValueSplit"
+        return "ExpTimeValueSharedC"
 
     @property
     def param_names(self) -> list[str]:
-        return ["ac", "bc", "cc", "ap", "bp", "cp"]
+        return ["ac", "bc", "ap", "bp", "c"]
 
     def default_params(self) -> np.ndarray:
-        return np.array([5.0, 3.0, 0.5, 5.0, 3.0, 0.5])
+        return np.array([5.0, 3.0, 5.0, 3.0, 0.5])
 
     def bounds(self) -> list[tuple[float, float]]:
         return [
             (1e-4, 200.0),  # ac
-            (0.1, 50.0),    # bc
-            (0.0, 50.0),    # cc
+            (0.1,  50.0),   # bc
             (1e-4, 200.0),  # ap
-            (0.1, 50.0),    # bp
-            (0.0, 50.0),    # cp
+            (0.1,  50.0),   # bp
+            (0.0,  50.0),   # c  (shared floor, non-negative)
         ]
 
+    # ------------------------------------------------------------------
     @staticmethod
     def _tv(x: np.ndarray, a: float, b: float, c: float) -> np.ndarray:
+        """Time value: a * exp(-b * |x|) + c."""
         return a * np.exp(-b * np.abs(x)) + c
 
     def apply_reaction(
@@ -57,20 +62,19 @@ class ExpTimeValueSplitModel(ModelPlugin):
         strikes: np.ndarray,
         F: float,
     ) -> np.ndarray:
-        new_params = params.copy()
-        ac, bc, cc, ap, bp, cp = new_params
+        ac, bc, ap, bp, c = params
 
-        if side == "call":
-            a, b, c = ac, bc, cc
-            wing_K = float(strikes.max())
-        else:
-            a, b, c = ap, bp, cp
-            wing_K = float(strikes.min())
-
-        # Step 1: ATM shift — adjust c
+        # ATM component always shifts the shared floor (affects both sides)
         c_new = c + atm_component
 
-        # Step 2: Wing shift — find b analytically
+        # Wing component adjusts only the decay of the traded side
+        if side == "call":
+            a, b = ac, bc
+            wing_K = float(strikes.max())
+        else:
+            a, b = ap, bp
+            wing_K = float(strikes.min())
+
         x_wing = abs(np.log(wing_K / F))
         b_new = b
         if x_wing > 1e-12 and abs(wing_component) > 1e-12:
@@ -78,16 +82,14 @@ class ExpTimeValueSplitModel(ModelPlugin):
             if val > 1e-8:
                 val_safe = min(val, 1.0 - 1e-9)  # saturate for large buys → b → b_lo
                 b_new = -np.log(val_safe) / x_wing
-            # Clamp to bounds
-            bounds = self.bounds()
-            b_idx = 1 if side == "call" else 4
-            b_new = np.clip(b_new, bounds[b_idx][0], bounds[b_idx][1])
+            b_idx = 1 if side == "call" else 3
+            b_lo, b_hi = self.bounds()[b_idx]
+            b_new = float(np.clip(b_new, b_lo, b_hi))
 
         if side == "call":
-            new_params = np.array([a, b_new, c_new, ap, bp, cp])
+            return np.array([ac, b_new, ap, bp, c_new])
         else:
-            new_params = np.array([ac, bc, cc, a, b_new, c_new])
-        return new_params
+            return np.array([ac, bc, ap, b_new, c_new])
 
     def price(
         self,
@@ -97,13 +99,13 @@ class ExpTimeValueSplitModel(ModelPlugin):
         T: float,
         params: np.ndarray,
     ) -> float:
-        ac, bc, cc, ap, bp, cp = params
+        ac, bc, ap, bp, c = params
         x = np.log(K / F)
         if option_type == "call":
-            tv = float(self._tv(np.array([x]), ac, bc, cc)[0])
+            tv = float(self._tv(np.array([x]), ac, bc, c)[0])
             return max(F - K, 0.0) + tv
         else:
-            tv = float(self._tv(np.array([x]), ap, bp, cp)[0])
+            tv = float(self._tv(np.array([x]), ap, bp, c)[0])
             return max(K - F, 0.0) + tv
 
     def vectorized_price(
@@ -114,11 +116,11 @@ class ExpTimeValueSplitModel(ModelPlugin):
         T: float,
         params: np.ndarray,
     ) -> np.ndarray:
-        ac, bc, cc, ap, bp, cp = params
+        ac, bc, ap, bp, c = params
         x = np.log(K_array / F)
         if option_type == "call":
-            tv = self._tv(x, ac, bc, cc)
+            tv = self._tv(x, ac, bc, c)
             return np.maximum(F - K_array, 0.0) + tv
         else:
-            tv = self._tv(x, ap, bp, cp)
+            tv = self._tv(x, ap, bp, c)
             return np.maximum(K_array - F, 0.0) + tv

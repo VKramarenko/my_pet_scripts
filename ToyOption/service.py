@@ -6,9 +6,10 @@ import numpy as np
 
 from .data import CanonicalQuoteSet
 from .models.base import ModelPlugin
-from .models import MODELS, ExpTimeValueModel
+from .models import MODELS, ExpTimeValueSharedCModel
 from .calibrator import Calibrator, FitResult
 from .emulator import StrikeReactionEmulator, ReactionConfig, Trade
+from .spread import SPREAD_MODELS, ConstantSpreadModel, SpreadModel
 from . import analyzer
 
 
@@ -21,13 +22,15 @@ class ModelService:
 
     def __init__(self):
         self.quote_set: Optional[CanonicalQuoteSet] = None
-        self.model: ModelPlugin = ExpTimeValueModel()
+        self.model: ModelPlugin = ExpTimeValueSharedCModel()
         self.params: np.ndarray = self.model.default_params()
         self.last_fit: Optional[FitResult] = None
         self.loss_type: str = "huber"
         self.penalty_weight: float = 0.1
         self.emulator: Optional[StrikeReactionEmulator] = None
         self.base_params: Optional[np.ndarray] = None
+        self.spread_model: SpreadModel = ConstantSpreadModel()
+        self.spread_params: np.ndarray = self.spread_model.default_params()
 
     # ------------------------------------------------------------------
     # State setters
@@ -40,12 +43,22 @@ class ModelService:
         self.model = cls()
         self.params = self.model.default_params()
         self.last_fit = None
+        self.emulator = None    # clear stale emulator from previous model
+        self.base_params = None # clear stale base_params from previous model
 
     def set_params(self, params: np.ndarray) -> None:
         self.params = params.copy()
 
     def available_models(self) -> list[str]:
         return list(MODELS.keys())
+
+    def set_spread_model(self, model_name: str, params: Optional[np.ndarray] = None) -> None:
+        cls = SPREAD_MODELS[model_name]
+        self.spread_model = cls()
+        self.spread_params = params if params is not None else self.spread_model.default_params()
+
+    def available_spread_models(self) -> list[str]:
+        return list(SPREAD_MODELS.keys())
 
     # ------------------------------------------------------------------
     # Actions
@@ -100,10 +113,21 @@ class ModelService:
         all_res = np.concatenate([res_call, res_put]) if (len(res_call) or len(res_put)) else np.array([])
         metrics = analyzer.summary_metrics(all_res) if len(all_res) else {}
 
+        call_bid, call_ask = self.spread_model.bid_ask(
+            "call", K_grid, F, T, curves["call"], self.spread_params
+        )
+        put_bid, put_ask = self.spread_model.bid_ask(
+            "put", K_grid, F, T, curves["put"], self.spread_params
+        )
+
         return {
             "K_grid": K_grid,
             "call_curve": curves["call"],
             "put_curve": curves["put"],
+            "call_bid": call_bid,
+            "call_ask": call_ask,
+            "put_bid": put_bid,
+            "put_ask": put_ask,
             "market_calls": {"K": qs.call_strikes(), "P": qs.call_prices()},
             "market_puts": {"K": qs.put_strikes(), "P": qs.put_prices()},
             "res_call": res_call,

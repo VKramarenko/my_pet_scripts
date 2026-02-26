@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 import numpy as np
+
+if TYPE_CHECKING:
+    from ..data import CanonicalQuoteSet
 
 
 class ModelPlugin(ABC):
@@ -92,3 +96,31 @@ class ModelPlugin(ABC):
         raise NotImplementedError(
             f"{self.name} does not implement apply_reaction"
         )
+
+    def apply_parity_correction(
+        self,
+        params: np.ndarray,
+        traded_side: str,
+        quote_set: CanonicalQuoteSet,
+    ) -> np.ndarray:
+        """Restore put-call parity on the non-traded side after a reaction.
+
+        Default implementation is a no-op (models with a shared TV function
+        satisfy parity automatically).  Override in models that have
+        independent call/put TV functions.
+
+        Parameters
+        ----------
+        params : np.ndarray
+            Model parameters after apply_reaction.
+        traded_side : str
+            ``"call"`` or ``"put"`` — the side that was just traded.
+        quote_set : CanonicalQuoteSet
+            Current quote set (used to find common call/put strikes).
+
+        Returns
+        -------
+        np.ndarray
+            Potentially adjusted model parameters.
+        """
+        return params

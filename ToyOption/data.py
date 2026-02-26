@@ -140,6 +140,12 @@ class CanonicalQuoteSet:
         s = set(k for k, _, _ in self.calls) | set(k for k, _, _ in self.puts)
         return np.sort(list(s))
 
+    def common_strikes(self) -> np.ndarray:
+        """Sorted strikes present in both calls and puts."""
+        c_set = {k for k, _, _ in self.calls}
+        p_set = {k for k, _, _ in self.puts}
+        return np.sort(list(c_set & p_set))
+
     def n_points(self) -> int:
         return len(self.calls) + len(self.puts)
 

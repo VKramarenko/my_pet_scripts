@@ -192,6 +192,24 @@ def build_layout():
                                 "fontSize": "13px", "backgroundColor": "#f8f8f8",
                                 "padding": "8px", "borderRadius": "4px"}),
 
+                # ---- Bid/Ask Spread ----
+                html.Hr(style={"marginTop": "16px"}),
+                html.H5("Bid/Ask Spread"),
+                html.Div([
+                    html.Label("Spread Model"),
+                    dcc.Dropdown(
+                        id="dropdown-spread-model",
+                        options=[{"label": n, "value": n} for n in svc.available_spread_models()],
+                        value=svc.spread_model.name,
+                        clearable=False,
+                    ),
+                ], style={"marginBottom": "6px"}),
+                html.Div([
+                    html.Label("Spread"),
+                    dcc.Input(id="input-spread-value", type="number", value=0.5,
+                              step=0.05, style={"width": "100%"}),
+                ], style={"marginBottom": "10px"}),
+
                 # ---- Reaction Emulator ----
                 html.Hr(style={"marginTop": "20px"}),
                 html.H4("Reaction Emulator"),
@@ -596,9 +614,12 @@ def sync_params_to_controls(params_json):
     Input("input-T", "value"),
     Input("table-calls", "data"),
     Input("table-puts", "data"),
+    Input("dropdown-spread-model", "value"),
+    Input("input-spread-value", "value"),
     State("store-base-params-json", "data"),
 )
-def update_plots(param_inputs, param_sliders, F, T, call_rows, put_rows, base_params_json):
+def update_plots(param_inputs, param_sliders, F, T, call_rows, put_rows,
+                 spread_model_name, spread_value, base_params_json):
     # Determine which triggered — prefer sliders for smooth interaction
     ctx = dash.callback_context
     if not ctx.triggered:
@@ -620,6 +641,9 @@ def update_plots(param_inputs, param_sliders, F, T, call_rows, put_rows, base_pa
 
     svc.set_data(qs)
     svc.set_params(params)
+    if spread_model_name:
+        svc.set_spread_model(spread_model_name,
+                             np.array([float(spread_value or 0.5)]))
     payload = svc.evaluate_for_plots()
 
     K_grid = payload["K_grid"]
@@ -638,6 +662,27 @@ def update_plots(param_inputs, param_sliders, F, T, call_rows, put_rows, base_pa
     fig_prices.add_trace(go.Scatter(
         x=K_grid, y=payload["put_curve"], mode="lines",
         name="Put (model)", line={"color": "#ff7f0e", "width": 2},
+    ))
+    # Bid/Ask spread bands
+    fig_prices.add_trace(go.Scatter(
+        x=K_grid, y=payload["call_bid"], mode="lines",
+        name="Call Bid", line={"color": "#1f77b4", "width": 1, "dash": "dot"},
+        opacity=0.55,
+    ))
+    fig_prices.add_trace(go.Scatter(
+        x=K_grid, y=payload["call_ask"], mode="lines",
+        name="Call Ask", line={"color": "#1f77b4", "width": 1, "dash": "dot"},
+        opacity=0.55,
+    ))
+    fig_prices.add_trace(go.Scatter(
+        x=K_grid, y=payload["put_bid"], mode="lines",
+        name="Put Bid", line={"color": "#ff7f0e", "width": 1, "dash": "dot"},
+        opacity=0.55,
+    ))
+    fig_prices.add_trace(go.Scatter(
+        x=K_grid, y=payload["put_ask"], mode="lines",
+        name="Put Ask", line={"color": "#ff7f0e", "width": 1, "dash": "dot"},
+        opacity=0.55,
     ))
     # Market points
     if len(mc["K"]):
@@ -743,6 +788,33 @@ def update_plots(param_inputs, param_sliders, F, T, call_rows, put_rows, base_pa
                     x=K_put_grid[valid], y=iv_put_curve[valid] * 100, mode="lines",
                     name="Put IV (model)", line={"color": "#ff7f0e", "width": 2},
                 ))
+        # Bid/Ask IV bands
+        if np.any(call_mask):
+            K_call_grid = K_grid[call_mask]
+            for label, key in [("Call Bid IV", "call_bid"), ("Call Ask IV", "call_ask")]:
+                iv_ba = implied_vols_from_prices(
+                    payload[key][call_mask], K_call_grid, fwd, T_val, "call"
+                )
+                valid = ~np.isnan(iv_ba)
+                if np.any(valid):
+                    fig_iv.add_trace(go.Scatter(
+                        x=K_call_grid[valid], y=iv_ba[valid] * 100, mode="lines",
+                        name=label, line={"color": "#1f77b4", "width": 1, "dash": "dot"},
+                        opacity=0.55,
+                    ))
+        if np.any(put_mask):
+            K_put_grid = K_grid[put_mask]
+            for label, key in [("Put Bid IV", "put_bid"), ("Put Ask IV", "put_ask")]:
+                iv_ba = implied_vols_from_prices(
+                    payload[key][put_mask], K_put_grid, fwd, T_val, "put"
+                )
+                valid = ~np.isnan(iv_ba)
+                if np.any(valid):
+                    fig_iv.add_trace(go.Scatter(
+                        x=K_put_grid[valid], y=iv_ba[valid] * 100, mode="lines",
+                        name=label, line={"color": "#ff7f0e", "width": 1, "dash": "dot"},
+                        opacity=0.55,
+                    ))
         # Market IV at user strikes
         if len(mc["K"]):
             iv_call_mkt = implied_vols_from_prices(mc["P"], mc["K"], fwd, T_val, "call")
