@@ -83,7 +83,7 @@ class ModelService:
         pb_raw, pa_raw = self.spread_model.bid_ask(
             "put", put_strikes, F, T, put_fair, self.spread_params
         )
-        return TradableChain(
+        chain = TradableChain(
             call_strikes=call_strikes,
             put_strikes=put_strikes,
             call_fair=call_fair,
@@ -97,6 +97,35 @@ class ModelService:
             put_bid=pb_raw.copy(),
             put_ask=pa_raw.copy(),
         )
+        self._apply_parity_to_chain(chain, step)
+        return chain
+
+    def _apply_parity_to_chain(self, chain: TradableChain, step: float) -> None:
+        """In-place parity correction на общих страйках цепочки.
+
+        Для каждого страйка, присутствующего в обоих рядах (call и put):
+        - вычисляет ошибку паритета: err = C_mid_raw - P_mid_raw - (F - K)
+        - распределяет ошибку поровну между call и put
+        - сохраняет исходную ширину спреда
+        Результат записывается в call_bid/ask, put_bid/ask (не в *_raw).
+        """
+        F = self.quote_set.F
+        # Находим общие страйки через округление (оба грида имеют одинаковый шаг)
+        call_key = {round(k / step): i for i, k in enumerate(chain.call_strikes)}
+        put_key  = {round(k / step): j for j, k in enumerate(chain.put_strikes)}
+        for key in set(call_key) & set(put_key):
+            i = call_key[key]
+            j = put_key[key]
+            K = float(chain.call_strikes[i])
+            c_mid  = (chain.call_bid_raw[i] + chain.call_ask_raw[i]) / 2
+            p_mid  = (chain.put_bid_raw[j]  + chain.put_ask_raw[j])  / 2
+            err    = c_mid - p_mid - (F - K)
+            c_half = (chain.call_ask_raw[i] - chain.call_bid_raw[i]) / 2
+            p_half = (chain.put_ask_raw[j]  - chain.put_bid_raw[j])  / 2
+            chain.call_bid[i] = c_mid - err / 2 - c_half
+            chain.call_ask[i] = c_mid - err / 2 + c_half
+            chain.put_bid[j]  = p_mid + err / 2 - p_half
+            chain.put_ask[j]  = p_mid + err / 2 + p_half
 
     # ------------------------------------------------------------------
     # Actions
