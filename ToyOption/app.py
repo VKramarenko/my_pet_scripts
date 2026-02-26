@@ -210,6 +210,56 @@ def build_layout():
                               step=0.05, style={"width": "100%"}),
                 ], style={"marginBottom": "10px"}),
 
+                # ---- Option Chain ----
+                html.Hr(style={"marginTop": "16px"}),
+                html.H5("Option Chain"),
+                dcc.Checklist(
+                    id="chain-enabled",
+                    options=[{"label": " Enable", "value": "on"}],
+                    value=[],
+                    style={"marginBottom": "6px"},
+                ),
+                html.Div([
+                    html.Span("Call:", style={"fontSize": "12px", "fontWeight": "bold",
+                                              "display": "inline-block", "width": "14%"}),
+                    html.Div([
+                        html.Label("Start", style={"fontSize": "11px"}),
+                        dcc.Input(id="input-chain-call-start", type="number",
+                                  placeholder="90",
+                                  style={"width": "100%", "fontSize": "12px"}),
+                    ], style={"display": "inline-block", "width": "38%",
+                              "marginRight": "4%"}),
+                    html.Div([
+                        html.Label("End", style={"fontSize": "11px"}),
+                        dcc.Input(id="input-chain-call-end", type="number",
+                                  placeholder="110",
+                                  style={"width": "100%", "fontSize": "12px"}),
+                    ], style={"display": "inline-block", "width": "38%"}),
+                ], style={"marginBottom": "4px"}),
+                html.Div([
+                    html.Span("Put:", style={"fontSize": "12px", "fontWeight": "bold",
+                                             "display": "inline-block", "width": "14%"}),
+                    html.Div([
+                        html.Label("Start", style={"fontSize": "11px"}),
+                        dcc.Input(id="input-chain-put-start", type="number",
+                                  placeholder="90",
+                                  style={"width": "100%", "fontSize": "12px"}),
+                    ], style={"display": "inline-block", "width": "38%",
+                              "marginRight": "4%"}),
+                    html.Div([
+                        html.Label("End", style={"fontSize": "11px"}),
+                        dcc.Input(id="input-chain-put-end", type="number",
+                                  placeholder="110",
+                                  style={"width": "100%", "fontSize": "12px"}),
+                    ], style={"display": "inline-block", "width": "38%"}),
+                ], style={"marginBottom": "4px"}),
+                html.Div([
+                    html.Label("Step", style={"fontSize": "12px"}),
+                    dcc.Input(id="input-chain-step", type="number",
+                              value=1.0, step=0.5,
+                              style={"width": "100%", "fontSize": "12px"}),
+                ], style={"marginBottom": "10px"}),
+
                 # ---- Reaction Emulator ----
                 html.Hr(style={"marginTop": "20px"}),
                 html.H4("Reaction Emulator"),
@@ -616,10 +666,19 @@ def sync_params_to_controls(params_json):
     Input("table-puts", "data"),
     Input("dropdown-spread-model", "value"),
     Input("input-spread-value", "value"),
+    Input("chain-enabled", "value"),
+    Input("input-chain-call-start", "value"),
+    Input("input-chain-call-end", "value"),
+    Input("input-chain-put-start", "value"),
+    Input("input-chain-put-end", "value"),
+    Input("input-chain-step", "value"),
     State("store-base-params-json", "data"),
 )
 def update_plots(param_inputs, param_sliders, F, T, call_rows, put_rows,
-                 spread_model_name, spread_value, base_params_json):
+                 spread_model_name, spread_value,
+                 chain_enabled, chain_call_start, chain_call_end,
+                 chain_put_start, chain_put_end, chain_step,
+                 base_params_json):
     # Determine which triggered — prefer sliders for smooth interaction
     ctx = dash.callback_context
     if not ctx.triggered:
@@ -644,6 +703,18 @@ def update_plots(param_inputs, param_sliders, F, T, call_rows, put_rows,
     if spread_model_name:
         svc.set_spread_model(spread_model_name,
                              np.array([float(spread_value or 0.5)]))
+
+    chain_on = bool(chain_enabled and "on" in chain_enabled)
+    if (chain_on
+            and chain_call_start is not None and chain_call_end is not None
+            and chain_put_start is not None and chain_put_end is not None
+            and chain_step):
+        svc.set_chain(float(chain_call_start), float(chain_call_end),
+                      float(chain_put_start), float(chain_put_end),
+                      float(chain_step))
+    else:
+        svc.clear_chain()
+
     payload = svc.evaluate_for_plots()
 
     K_grid = payload["K_grid"]
@@ -730,6 +801,42 @@ def update_plots(param_inputs, param_sliders, F, T, call_rows, put_rows,
                 name="Put (base)", line={"color": "#ff7f0e", "width": 1, "dash": "dash"},
                 opacity=0.5,
             ))
+
+    # Chain bid/ask markers
+    if "chain" in payload:
+        ch = payload["chain"]
+        fig_prices.add_trace(go.Scatter(
+            x=ch.call_strikes, y=ch.call_fair, mode="markers",
+            name="Call (chain fair)",
+            marker={"color": "#1f77b4", "size": 6, "symbol": "x",
+                    "line": {"width": 1.5}},
+        ))
+        fig_prices.add_trace(go.Scatter(
+            x=ch.call_strikes, y=ch.call_bid, mode="markers",
+            name="Call Bid (chain)",
+            marker={"color": "#1f77b4", "size": 7, "symbol": "triangle-up"},
+        ))
+        fig_prices.add_trace(go.Scatter(
+            x=ch.call_strikes, y=ch.call_ask, mode="markers",
+            name="Call Ask (chain)",
+            marker={"color": "#1f77b4", "size": 7, "symbol": "triangle-down"},
+        ))
+        fig_prices.add_trace(go.Scatter(
+            x=ch.put_strikes, y=ch.put_fair, mode="markers",
+            name="Put (chain fair)",
+            marker={"color": "#ff7f0e", "size": 6, "symbol": "x",
+                    "line": {"width": 1.5}},
+        ))
+        fig_prices.add_trace(go.Scatter(
+            x=ch.put_strikes, y=ch.put_bid, mode="markers",
+            name="Put Bid (chain)",
+            marker={"color": "#ff7f0e", "size": 7, "symbol": "triangle-up"},
+        ))
+        fig_prices.add_trace(go.Scatter(
+            x=ch.put_strikes, y=ch.put_ask, mode="markers",
+            name="Put Ask (chain)",
+            marker={"color": "#ff7f0e", "size": 7, "symbol": "triangle-down"},
+        ))
 
     fig_prices.add_vline(x=fwd, line_dash="dash", line_color="gray",
                          annotation_text="F")
@@ -892,6 +999,46 @@ def update_plots(param_inputs, param_sliders, F, T, call_rows, put_rows,
                             line={"color": "#ff7f0e", "width": 1, "dash": "dash"},
                             opacity=0.5,
                         ))
+
+    # Chain IV markers
+    if "chain" in payload and T_val > 0:
+        ch = payload["chain"]
+        # Call chain: use call_strikes (filter K >= F for cleaner IV)
+        ck_mask = ch.call_strikes >= fwd
+        if np.any(ck_mask):
+            ck = ch.call_strikes[ck_mask]
+            for label, arr, sym in [
+                ("Call Fair IV (chain)", ch.call_fair[ck_mask], "x"),
+                ("Call Bid IV (chain)", ch.call_bid[ck_mask], "triangle-up"),
+                ("Call Ask IV (chain)", ch.call_ask[ck_mask], "triangle-down"),
+            ]:
+                iv_ch = implied_vols_from_prices(arr, ck, fwd, T_val, "call")
+                valid = ~np.isnan(iv_ch)
+                if np.any(valid):
+                    fig_iv.add_trace(go.Scatter(
+                        x=ck[valid], y=iv_ch[valid] * 100, mode="markers",
+                        name=label,
+                        marker={"color": "#1f77b4", "size": 6, "symbol": sym,
+                                "line": {"width": 1.5}},
+                    ))
+        # Put chain: use put_strikes (filter K <= F for cleaner IV)
+        pk_mask = ch.put_strikes <= fwd
+        if np.any(pk_mask):
+            pk = ch.put_strikes[pk_mask]
+            for label, arr, sym in [
+                ("Put Fair IV (chain)", ch.put_fair[pk_mask], "x"),
+                ("Put Bid IV (chain)", ch.put_bid[pk_mask], "triangle-up"),
+                ("Put Ask IV (chain)", ch.put_ask[pk_mask], "triangle-down"),
+            ]:
+                iv_ch = implied_vols_from_prices(arr, pk, fwd, T_val, "put")
+                valid = ~np.isnan(iv_ch)
+                if np.any(valid):
+                    fig_iv.add_trace(go.Scatter(
+                        x=pk[valid], y=iv_ch[valid] * 100, mode="markers",
+                        name=label,
+                        marker={"color": "#ff7f0e", "size": 6, "symbol": sym,
+                                "line": {"width": 1.5}},
+                    ))
 
     fig_iv.add_vline(x=fwd, line_dash="dash", line_color="gray",
                      annotation_text="F")

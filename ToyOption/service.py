@@ -10,6 +10,7 @@ from .models import MODELS, ExpTimeValueSharedCModel
 from .calibrator import Calibrator, FitResult
 from .emulator import StrikeReactionEmulator, ReactionConfig, Trade
 from .spread import SPREAD_MODELS, ConstantSpreadModel, SpreadModel
+from .chain import TradableChain
 from . import analyzer
 
 
@@ -31,6 +32,8 @@ class ModelService:
         self.base_params: Optional[np.ndarray] = None
         self.spread_model: SpreadModel = ConstantSpreadModel()
         self.spread_params: np.ndarray = self.spread_model.default_params()
+        # (call_start, call_end, put_start, put_end, step)
+        self.chain_config: Optional[tuple[float, float, float, float, float]] = None
 
     # ------------------------------------------------------------------
     # State setters
@@ -59,6 +62,41 @@ class ModelService:
 
     def available_spread_models(self) -> list[str]:
         return list(SPREAD_MODELS.keys())
+
+    def set_chain(self, call_start: float, call_end: float,
+                  put_start: float, put_end: float, step: float) -> None:
+        self.chain_config = (call_start, call_end, put_start, put_end, step)
+
+    def clear_chain(self) -> None:
+        self.chain_config = None
+
+    def _build_chain(self, call_start: float, call_end: float,
+                     put_start: float, put_end: float, step: float) -> TradableChain:
+        call_strikes = np.arange(call_start, call_end + step * 0.5, step)
+        put_strikes = np.arange(put_start, put_end + step * 0.5, step)
+        F, T = self.quote_set.F, self.quote_set.T
+        call_fair = self.model.vectorized_price("call", call_strikes, F, T, self.params)
+        put_fair = self.model.vectorized_price("put", put_strikes, F, T, self.params)
+        cb_raw, ca_raw = self.spread_model.bid_ask(
+            "call", call_strikes, F, T, call_fair, self.spread_params
+        )
+        pb_raw, pa_raw = self.spread_model.bid_ask(
+            "put", put_strikes, F, T, put_fair, self.spread_params
+        )
+        return TradableChain(
+            call_strikes=call_strikes,
+            put_strikes=put_strikes,
+            call_fair=call_fair,
+            put_fair=put_fair,
+            call_bid_raw=cb_raw,
+            call_ask_raw=ca_raw,
+            put_bid_raw=pb_raw,
+            put_ask_raw=pa_raw,
+            call_bid=cb_raw.copy(),
+            call_ask=ca_raw.copy(),
+            put_bid=pb_raw.copy(),
+            put_ask=pa_raw.copy(),
+        )
 
     # ------------------------------------------------------------------
     # Actions
@@ -120,7 +158,7 @@ class ModelService:
             "put", K_grid, F, T, curves["put"], self.spread_params
         )
 
-        return {
+        result = {
             "K_grid": K_grid,
             "call_curve": curves["call"],
             "put_curve": curves["put"],
@@ -136,6 +174,11 @@ class ModelService:
             "metrics": metrics,
             "F": F,
         }
+
+        if self.chain_config is not None:
+            result["chain"] = self._build_chain(*self.chain_config)
+
+        return result
 
     # ------------------------------------------------------------------
     # Emulator
