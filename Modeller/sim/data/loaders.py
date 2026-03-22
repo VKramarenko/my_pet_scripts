@@ -138,6 +138,25 @@ def load_test_data_trades(path: str | Path) -> Iterator[MarketTrade]:
     yield from load_bybit_trades(resolved_path)
 
 
+def load_l2_binance(
+    data_dir: str,
+    symbol: str,
+    depth: int = 25,
+    start_ts: int | None = None,
+    end_ts: int | None = None,
+) -> Iterator[MarketSnapshot]:
+    """Загружает Binance L2 из JSONL.gz (snapshot + diff) → MarketSnapshot."""
+    from sim.data.binance_loader import load_binance_l2
+
+    yield from load_binance_l2(
+        data_dir=data_dir,
+        symbol=symbol,
+        depth=depth,
+        start_ts=start_ts,
+        end_ts=end_ts,
+    )
+
+
 def load_bybit_trades(path: str | Path) -> Iterator[MarketTrade]:
     records = _read_json_records(path)
     records.sort(key=lambda x: float(x["timestamp"]))
