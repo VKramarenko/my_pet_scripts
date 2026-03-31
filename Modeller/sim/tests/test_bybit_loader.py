@@ -19,6 +19,7 @@ def test_bybit_loader_reads_custom_json_streams() -> None:
     assert len(trades) > 0
     assert snapshots[0].bids
     assert snapshots[0].asks
+    assert snapshots[0].symbol == "BTCUSDT"
     assert trades[0].side in {"buyer_initiated", "seller_initiated"}
 
 

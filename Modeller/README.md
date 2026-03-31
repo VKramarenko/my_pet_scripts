@@ -6,9 +6,35 @@ Python simulator for strategy backtesting on L2 snapshots (trades optional) with
 
 Supported inputs: `CSV` or `Parquet`.
 
-1. `l2_snapshots`:
+1. `l2_snapshots` (choose one layout):
+
+**Wide L2 (canonical)** — use `--loader wide`:
+
+- `time` — snapshot time (epoch seconds as float, or parseable datetime); alias: `ts`
+- `symbol` — instrument id (string)
+- For each level `i` from 1 to N: `ask_price_i`, `bid_price_i`, `ask_size_i`, `bid_size_i`
+- Missing levels: use NaN for all four columns of that level; partial invalid pairs are skipped when building the book
+- If the file has more than one distinct `symbol`, pass `--symbol SYMBOL` (or `symbol_filter` in code) so the backtest replays a single instrument
+
+**Legacy list columns** — default loader:
+
 - required columns: `ts`, `bids`, `asks`
 - `bids` / `asks` are arrays of `(price, size)` levels
+
+Conversion helpers (in `sim.data.book_converters`): `legacy_bids_asks_to_wide`, `bybit_snapshots_to_wide`, `wide_to_legacy_lists`.
+
+CLI: from the Modeller directory, convert Bybit orderbook JSON to wide CSV (auto depth, auto-detect format from `.json`):
+
+```bash
+python convert_l2_to_wide.py -i test_data/bybit_custom_loader/orderbook_BTCUSDT_spot_2026-03-04.json -o orderbook_BTCUSDT_wide.csv
+```
+
+Legacy `ts`+`bids`+`asks` file:
+
+```bash
+python convert_l2_to_wide.py --format legacy -i path/to/l2.csv -o out_wide.csv --symbol BTCUSDT
+```
+
 2. `trades` (optional):
 - required columns: `ts`, `price`, `size`, `side`
 - `side` is `buyer_initiated` or `seller_initiated`
@@ -61,6 +87,14 @@ pytest -q
 ```bash
 python run_backtest.py --l2 path/to/l2.csv
 ```
+
+Wide L2 example:
+
+```bash
+python run_backtest.py --loader wide --l2 path/to/l2_wide.csv --symbol BTCUSDT
+```
+
+(`--symbol` is only required when the wide file contains multiple symbols.)
 
 Optional trades merge:
 

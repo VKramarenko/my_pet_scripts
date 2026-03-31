@@ -19,11 +19,14 @@ def _run_from_form(form: dict[str, Any]):
         taker_max_position=form["taker_max_position"],
     )
     strategy = _build_strategy(strategy_args)
+    sym = form.get("symbol")
+    symbol = None if sym in (None, "") else str(sym)
     return run(
         form["l2"],
         form.get("trades"),
         loader=form["loader"],
         strategy=strategy,
+        symbol=symbol,
     )
 
 
@@ -36,8 +39,13 @@ def main() -> None:
     parser.add_argument(
         "--loader",
         default="default",
-        choices=["default", "bybit", "test_data"],
+        choices=["default", "bybit", "test_data", "wide"],
         help="Input loader format",
+    )
+    parser.add_argument(
+        "--symbol",
+        default=None,
+        help="For wide loader: filter to this symbol when the file has multiple symbols",
     )
     parser.add_argument(
         "--strategy",
@@ -71,6 +79,7 @@ def main() -> None:
         "l2": args.l2,
         "trades": args.trades,
         "loader": args.loader,
+        "symbol": args.symbol,
         "strategy": args.strategy,
         "mm_spread": args.mm_spread,
         "mm_quote_size": args.mm_quote_size,

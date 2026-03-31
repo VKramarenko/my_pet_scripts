@@ -12,6 +12,7 @@ class MarketSnapshot:
     ts: float
     bids: Sequence[BookLevel]
     asks: Sequence[BookLevel]
+    symbol: str | None = None
 
 
 @dataclass(frozen=True)

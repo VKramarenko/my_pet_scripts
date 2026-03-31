@@ -1,29 +1,18 @@
 from __future__ import annotations
 
-import ast
 import json
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
-
 import pandas as pd
 
 from sim.core.events import MarketSnapshot, MarketTrade
-
-
-def _parse_levels(raw: object) -> list[tuple[float, float]]:
-    if isinstance(raw, list):
-        return [(float(p), float(s)) for p, s in raw]
-    if isinstance(raw, str):
-        text = raw.strip()
-        if not text:
-            return []
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            parsed = ast.literal_eval(text)
-        return [(float(p), float(s)) for p, s in parsed]
-    raise ValueError(f"Unsupported levels payload: {type(raw)}")
+from sim.data.book_converters import (
+    dataframe_rows_to_snapshots,
+    row_time_to_float,
+    validate_wide_book_columns,
+)
+from sim.data.book_schema import detect_book_depth, resolve_time_column
+from sim.data.level_utils import bybit_row_ts_bids_asks, parse_levels
 
 
 def _read_frame(path: str | Path) -> pd.DataFrame:
@@ -74,27 +63,13 @@ def _resolve_test_data_path(path: str | Path) -> Path:
     )
 
 
-def _extract_snapshot_fields(row: dict[str, Any]) -> tuple[float, object, object]:
-    if {"timestamp", "bids", "asks"}.issubset(row):
-        return float(row["timestamp"]), row["bids"], row["asks"]
-    if {"ts", "b", "a"}.issubset(row):
-        return float(row["ts"]), row["b"], row["a"]
-    payload = row.get("data")
-    if isinstance(payload, dict):
-        if {"timestamp", "bids", "asks"}.issubset(payload):
-            return float(payload["timestamp"]), payload["bids"], payload["asks"]
-        if {"ts", "b", "a"}.issubset(payload):
-            return float(payload["ts"]), payload["b"], payload["a"]
-    raise ValueError("Unsupported orderbook snapshot format")
-
-
 def load_l2_snapshots(path: str | Path) -> Iterator[MarketSnapshot]:
     frame = _read_frame(path).sort_values("ts")
     for row in frame.itertuples(index=False):
         yield MarketSnapshot(
             ts=float(row.ts),
-            bids=_parse_levels(row.bids),
-            asks=_parse_levels(row.asks),
+            bids=parse_levels(row.bids),
+            asks=parse_levels(row.asks),
         )
 
 
@@ -111,13 +86,47 @@ def load_trades(path: str | Path) -> Iterator[MarketTrade]:
 
 def load_bybit_l2_snapshots(path: str | Path) -> Iterator[MarketSnapshot]:
     records = _read_json_records(path)
-    rows = []
+    rows: list[tuple[float, object, object, str | None]] = []
     for row in records:
-        ts, bids, asks = _extract_snapshot_fields(row)
-        rows.append((ts, bids, asks))
+        ts, bids, asks = bybit_row_ts_bids_asks(row)
+        sym = row.get("symbol")
+        symbol = None if sym is None else str(sym)
+        rows.append((ts, bids, asks, symbol))
     rows.sort(key=lambda x: x[0])
-    for ts, bids, asks in rows:
-        yield MarketSnapshot(ts=ts, bids=_parse_levels(bids), asks=_parse_levels(asks))
+    for ts, bids, asks, symbol in rows:
+        yield MarketSnapshot(
+            ts=ts, bids=parse_levels(bids), asks=parse_levels(asks), symbol=symbol
+        )
+
+
+def load_wide_l2_snapshots(
+    path: str | Path,
+    symbol_filter: str | None = None,
+) -> Iterator[MarketSnapshot]:
+    frame = _read_frame(path)
+    depth = detect_book_depth(list(frame.columns))
+    if depth < 1:
+        raise ValueError(
+            "Wide L2 frame must include level columns like ask_price_1, bid_price_1, ..."
+        )
+    validate_wide_book_columns(frame, depth)
+    time_col = resolve_time_column(list(frame.columns))
+    if "symbol" not in frame.columns:
+        raise ValueError("Wide L2 frame must include a 'symbol' column")
+    symbols = frame["symbol"].astype(str).unique()
+    if len(symbols) > 1 and symbol_filter is None:
+        raise ValueError(
+            "Wide L2 file contains multiple symbols "
+            f"{sorted(symbols.tolist())!r}; pass symbol_filter=... or --symbol"
+        )
+    if symbol_filter is not None:
+        frame = frame[frame["symbol"].astype(str) == symbol_filter]
+        if frame.empty:
+            raise ValueError(f"No rows for symbol_filter={symbol_filter!r}")
+    frame = frame.copy()
+    frame["_ts_sort"] = frame[time_col].map(row_time_to_float)
+    frame = frame.sort_values("_ts_sort")
+    yield from dataframe_rows_to_snapshots(frame, depth, time_col)
 
 
 def load_test_data_l2_snapshots(path: str | Path) -> Iterator[MarketSnapshot]:

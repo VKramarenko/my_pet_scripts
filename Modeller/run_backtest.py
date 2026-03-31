@@ -10,6 +10,7 @@ from sim.data.loaders import (
     load_test_data_l2_snapshots,
     load_test_data_trades,
     load_trades,
+    load_wide_l2_snapshots,
 )
 from sim.data.normalizers import merge_streams
 from sim.execution.fill_model_touch import TouchFillModel
@@ -39,6 +40,7 @@ def run(
     trades_path: str | None = None,
     loader: str = "default",
     strategy: StrategyBase | None = None,
+    symbol: str | None = None,
 ) -> MetricsCollector:
     if loader == "bybit":
         snapshots = list(load_bybit_l2_snapshots(l2_path))
@@ -46,6 +48,9 @@ def run(
     elif loader == "test_data":
         snapshots = list(load_test_data_l2_snapshots(l2_path))
         trades = list(load_test_data_trades(trades_path)) if trades_path else []
+    elif loader == "wide":
+        snapshots = list(load_wide_l2_snapshots(l2_path, symbol_filter=symbol))
+        trades = list(load_trades(trades_path)) if trades_path else []
     else:
         snapshots = list(load_l2_snapshots(l2_path))
         trades = list(load_trades(trades_path)) if trades_path else []
@@ -96,8 +101,13 @@ def main() -> None:
     parser.add_argument(
         "--loader",
         default="default",
-        choices=["default", "bybit", "test_data"],
+        choices=["default", "bybit", "test_data", "wide"],
         help="Input loader format",
+    )
+    parser.add_argument(
+        "--symbol",
+        default=None,
+        help="For wide loader: filter to this symbol when the file has multiple symbols",
     )
     parser.add_argument(
         "--strategy",
@@ -124,7 +134,13 @@ def main() -> None:
     )
     args = parser.parse_args()
     strategy = _build_strategy(args)
-    metrics = run(args.l2, args.trades, loader=args.loader, strategy=strategy)
+    metrics = run(
+        args.l2,
+        args.trades,
+        loader=args.loader,
+        strategy=strategy,
+        symbol=args.symbol,
+    )
     print(f"fills={metrics.num_fills}")
     if metrics.equity_curve:
         print(f"last_equity={metrics.equity_curve[-1][1]:.6f}")
