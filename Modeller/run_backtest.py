@@ -6,6 +6,7 @@ from sim.core.events import MarketSnapshot, MarketTrade
 from sim.data.loaders import (
     load_bybit_l2_snapshots,
     load_bybit_trades,
+    load_l2_binance,
     load_l2_snapshots,
     load_test_data_l2_snapshots,
     load_test_data_trades,
@@ -18,7 +19,9 @@ from sim.exchange.exchange_sim import ExchangeSim, PlaceOrderRequest
 from sim.market.orderbook_l2 import OrderBookL2
 from sim.portfolio.metrics import MetricsCollector
 from sim.portfolio.portfolio import Portfolio
+from sim.strategy.ema_crossover import EmaCrossoverStrategy
 from sim.strategy.mm_basic import BasicMMStrategy
+from sim.strategy.ob_imbalance import ObImbalanceStrategy
 from sim.strategy.strategy_base import CancelRequest, StrategyBase
 from sim.strategy.taker_bollinger import TakerBollingerStrategy
 
@@ -32,28 +35,47 @@ def _build_strategy(args: argparse.Namespace) -> StrategyBase:
             cooldown=args.taker_cooldown,
             max_position=args.taker_max_position,
         )
+    if args.strategy == "ema":
+        return EmaCrossoverStrategy(
+            fast_window=args.ema_fast,
+            slow_window=args.ema_slow,
+            order_qty=args.ema_qty,
+            max_position=args.ema_max_position,
+            limit_offset=args.ema_offset,
+        )
+    if args.strategy == "imbalance":
+        return ObImbalanceStrategy(
+            depth=args.imb_depth,
+            threshold=args.imb_threshold,
+            smoothing=args.imb_smoothing,
+            order_qty=args.imb_qty,
+            max_position=args.imb_max_position,
+        )
     return BasicMMStrategy(spread=args.mm_spread, quote_size=args.mm_quote_size)
 
 
 def run(
-    l2_path: str,
+    l2_path: str | None = None,
     trades_path: str | None = None,
     loader: str = "default",
     strategy: StrategyBase | None = None,
-    symbol: str | None = None,
+
+    snapshots: list[MarketSnapshot] | None = None,
+    trades: list[MarketTrade] | None = None,
 ) -> MetricsCollector:
-    if loader == "bybit":
-        snapshots = list(load_bybit_l2_snapshots(l2_path))
-        trades = list(load_bybit_trades(trades_path)) if trades_path else []
-    elif loader == "test_data":
-        snapshots = list(load_test_data_l2_snapshots(l2_path))
-        trades = list(load_test_data_trades(trades_path)) if trades_path else []
-    elif loader == "wide":
-        snapshots = list(load_wide_l2_snapshots(l2_path, symbol_filter=symbol))
-        trades = list(load_trades(trades_path)) if trades_path else []
-    else:
-        snapshots = list(load_l2_snapshots(l2_path))
-        trades = list(load_trades(trades_path)) if trades_path else []
+    if snapshots is None:
+        if loader == "bybit":
+            snapshots = list(load_bybit_l2_snapshots(l2_path))
+            trades = list(load_bybit_trades(trades_path)) if trades_path else []
+        elif loader == "test_data":
+            snapshots = list(load_test_data_l2_snapshots(l2_path))
+            trades = list(load_test_data_trades(trades_path)) if trades_path else []
+        else:
+            snapshots = list(load_l2_snapshots(l2_path))
+            trades = list(load_trades(trades_path)) if trades_path else []
+    if trades is None:
+        trades = []
+
     events = merge_streams(snapshots, trades)
     book = OrderBookL2(depth=10)
     exchange = ExchangeSim(book=book, fill_model=TouchFillModel())
@@ -96,14 +118,41 @@ def run(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run simple backtest.")
-    parser.add_argument("--l2", required=True, help="Path to L2 snapshots")
-    parser.add_argument("--trades", help="Path to trades (optional)")
+
+    # Data source
+    parser.add_argument("--l2", help="Path to L2 snapshots (for default/bybit/test_data loaders)")
+    parser.add_argument("--trades", help="Path to trades (optional, for default/bybit/test_data loaders)")
     parser.add_argument(
         "--loader",
         default="default",
         choices=["default", "bybit", "test_data", "wide"],
         help="Input loader format",
     )
+
+    # Binance-specific options
+    binance_group = parser.add_argument_group("Binance data source (--loader binance)")
+    binance_group.add_argument(
+        "--binance-dir",
+        help="Directory with Binance data (containing snapshots/ and diff/ subdirs)",
+    )
+    binance_group.add_argument(
+        "--binance-symbol",
+        default="BTCUSDT",
+        help="Binance symbol, e.g. BTCUSDT (default: BTCUSDT)",
+    )
+    binance_group.add_argument(
+        "--binance-date",
+        help="Date to load in YYYY-MM-DD format (loads full UTC day). "
+             "If omitted, loads all available data.",
+    )
+    binance_group.add_argument(
+        "--depth",
+        type=int,
+        default=25,
+        help="Orderbook depth (levels per side) for Binance loader (default: 25)",
+    )
+
+    # Strategy
     parser.add_argument(
         "--symbol",
         default=None,
@@ -112,7 +161,7 @@ def main() -> None:
     parser.add_argument(
         "--strategy",
         default="mm",
-        choices=["mm", "taker"],
+        choices=["mm", "taker", "ema", "imbalance"],
         help="Strategy to run",
     )
     parser.add_argument("--mm-spread", type=float, default=1.0, help="MM quote spread")
@@ -132,7 +181,22 @@ def main() -> None:
         default=1.0,
         help="Absolute max position for taker strategy",
     )
+
+    ema_group = parser.add_argument_group("EMA Crossover strategy (--strategy ema)")
+    ema_group.add_argument("--ema-fast", type=int, default=10, help="Fast EMA window (default: 10)")
+    ema_group.add_argument("--ema-slow", type=int, default=30, help="Slow EMA window (default: 30)")
+    ema_group.add_argument("--ema-qty", type=float, default=1.0, help="Order quantity (default: 1.0)")
+    ema_group.add_argument("--ema-max-position", type=float, default=1.0, help="Max position (default: 1.0)")
+    ema_group.add_argument("--ema-offset", type=float, default=0.0, help="Limit price offset from best bid/ask (default: 0.0)")
+
+    imb_group = parser.add_argument_group("Orderbook Imbalance strategy (--strategy imbalance)")
+    imb_group.add_argument("--imb-depth", type=int, default=5, help="Orderbook levels to consider (default: 5)")
+    imb_group.add_argument("--imb-threshold", type=float, default=0.3, help="Imbalance threshold for entry (default: 0.3)")
+    imb_group.add_argument("--imb-smoothing", type=int, default=3, help="Smoothing window for imbalance signal (default: 3)")
+    imb_group.add_argument("--imb-qty", type=float, default=1.0, help="Order quantity (default: 1.0)")
+    imb_group.add_argument("--imb-max-position", type=float, default=1.0, help="Max position (default: 1.0)")
     args = parser.parse_args()
+
     strategy = _build_strategy(args)
     metrics = run(
         args.l2,

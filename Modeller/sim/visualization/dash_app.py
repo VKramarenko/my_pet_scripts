@@ -39,7 +39,7 @@ def _build_equity_figure(metrics: MetricsCollector):
     import plotly.graph_objects as go
 
     points = _to_equity_points(metrics)
-    x_axis = [point["ts"] for point in points]
+    x_axis = [_ts_to_datetime(point["ts"]) for point in points]
     y_axis = [point["equity"] for point in points]
 
     figure = go.Figure()
@@ -48,10 +48,15 @@ def _build_equity_figure(metrics: MetricsCollector):
     )
     figure.update_layout(
         title="Backtest Equity Curve",
-        xaxis_title="Timestamp",
+        xaxis_title="Datetime (UTC)",
         yaxis_title="Equity",
         template="plotly_white",
         margin={"l": 40, "r": 20, "t": 60, "b": 40},
+        xaxis={
+            "tickangle": -45,
+            "tickformat": "%Y-%m-%d %H:%M:%S",
+            "type": "date",
+        },
     )
     return figure
 
@@ -177,7 +182,7 @@ def _to_fills_rows(metrics: MetricsCollector) -> list[dict[str, str | float]]:
     for event in metrics.fill_events:
         rows.append(
             {
-                "ts": float(event["ts"]),
+                "ts": _ts_to_datetime(float(event["ts"])).strftime("%Y-%m-%d %H:%M:%S"),
                 "order_id": str(event["order_id"]),
                 "side": str(event["side"]),
                 "price": float(event["price"]),
@@ -399,7 +404,7 @@ def create_dash_app(
                             dash_table.DataTable(
                                 id="fills-table",
                                 columns=[
-                                    {"name": "ts", "id": "ts"},
+                                    {"name": "datetime (UTC)", "id": "ts"},
                                     {"name": "order_id", "id": "order_id"},
                                     {"name": "side", "id": "side"},
                                     {"name": "price", "id": "price"},
