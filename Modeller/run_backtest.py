@@ -59,7 +59,7 @@ def run(
     trades_path: str | None = None,
     loader: str = "default",
     strategy: StrategyBase | None = None,
-
+    symbol: str | None = None,
     snapshots: list[MarketSnapshot] | None = None,
     trades: list[MarketTrade] | None = None,
 ) -> MetricsCollector:
@@ -70,6 +70,9 @@ def run(
         elif loader == "test_data":
             snapshots = list(load_test_data_l2_snapshots(l2_path))
             trades = list(load_test_data_trades(trades_path)) if trades_path else []
+        elif loader == "wide":
+            snapshots = list(load_wide_l2_snapshots(l2_path, symbol_filter=symbol))
+            trades = list(load_trades(trades_path)) if trades_path else []
         else:
             snapshots = list(load_l2_snapshots(l2_path))
             trades = list(load_trades(trades_path)) if trades_path else []

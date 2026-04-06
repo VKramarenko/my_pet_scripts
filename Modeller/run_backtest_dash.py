@@ -42,7 +42,8 @@ def _run_from_form(form: dict[str, Any]):
     if pre_loaded is not None:
         return run(snapshots=pre_loaded, strategy=strategy)
 
-
+    sym = form.get("symbol")
+    symbol = None if sym in (None, "") else str(sym)
     return run(
         form["l2"],
         form.get("trades"),
@@ -64,7 +65,7 @@ def main() -> None:
         "--loader",
         default="default",
 
-        choices=["default", "bybit", "test_data", "binance"],
+        choices=["default", "bybit", "test_data", "wide", "binance"],
 
         help="Input loader format",
     )
@@ -172,7 +173,7 @@ def main() -> None:
         "l2": args.l2,
         "trades": args.trades,
         "loader": args.loader,
-
+        "symbol": args.symbol,
         "snapshots": pre_loaded_snapshots,
 
         "strategy": args.strategy,
