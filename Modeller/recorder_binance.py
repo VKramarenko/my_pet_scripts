@@ -636,6 +636,8 @@ async def _stop_at(target: datetime, stop_event: asyncio.Event):
 # ---------------------------------------------------------------------------
 
 async def async_main(args: argparse.Namespace):
+    if args.exchange != "binance":
+        raise SystemExit("Use recorder_bybit.py for Bybit recording")
     if args.mode == "history":
         # Исторические трейды (только Binance)
         if args.exchange != "binance":
@@ -669,24 +671,16 @@ async def async_main(args: argparse.Namespace):
         print(f"Авто-стоп в {target_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC", flush=True)
 
     try:
-        if args.exchange == "binance":
-            cfg = BinanceConfig(
-                symbol=args.symbol,
-                snapshot_limit=5000,
-                stream_speed="100ms",
-            )
-            rec = BinanceDepthRecorder(cfg, out_dir=args.out_dir)
-            try:
-                await rec.run(stop_event=stop_event)
-            finally:
-                rec.close()
-        else:  # bybit
-            cfg = BybitConfig(category="spot", symbol=args.symbol, level=200)
-            rec = BybitDepthRecorder(cfg, out_dir=args.out_dir)
-            try:
-                await rec.run(stop_event=stop_event)
-            finally:
-                rec.close()
+        cfg = BinanceConfig(
+            symbol=args.symbol,
+            snapshot_limit=5000,
+            stream_speed="100ms",
+        )
+        rec = BinanceDepthRecorder(cfg, out_dir=args.out_dir)
+        try:
+            await rec.run(stop_event=stop_event)
+        finally:
+            rec.close()
     finally:
         for t in stop_tasks:
             t.cancel()

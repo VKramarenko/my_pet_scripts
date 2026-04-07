@@ -1,127 +1,139 @@
 # Modeller
 
-Python simulator for strategy backtesting on L2 snapshots (trades optional) with pluggable execution models.
+Python simulator for backtesting strategies on L2 orderbook snapshots.
 
-## Input data and assumptions
+## Current workflow
 
-Supported inputs: `CSV` or `Parquet`.
+The project now uses one canonical orderbook input format:
 
-1. `l2_snapshots` (choose one layout):
+- `wide CSV` for L2 snapshots
+- optional `CSV` for trades
+- JSON config file for strategy and run parameters
 
-**Wide L2 (canonical)** — use `--loader wide`:
+The intended pipeline is:
 
-- `time` — snapshot time (epoch seconds as float, or parseable datetime); alias: `ts`
-- `symbol` — instrument id (string)
-- For each level `i` from 1 to N: `ask_price_i`, `bid_price_i`, `ask_size_i`, `bid_size_i`
-- Missing levels: use NaN for all four columns of that level; partial invalid pairs are skipped when building the book
-- If the file has more than one distinct `symbol`, pass `--symbol SYMBOL` (or `symbol_filter` in code) so the backtest replays a single instrument
+1. Record raw data with a dedicated loader script.
+2. Convert raw orderbook data to wide CSV.
+3. Run the backtest from `backtest_config.json` or another config file.
 
-**Legacy list columns** — default loader:
+## Main scripts
 
-- required columns: `ts`, `bids`, `asks`
-- `bids` / `asks` are arrays of `(price, size)` levels
+- `recorder_bybit.py` - live Bybit orderbook recorder
+- `recorder_binance.py` - Binance recorder/downloader
+- `convert_l2_to_wide.py` - converts raw Bybit JSON or legacy L2 into canonical wide CSV
+- `run_backtest.py` - headless backtest runner
+- `run_backtest_dash.py` - Dash UI on top of the same backtest core
 
-Conversion helpers (in `sim.data.book_converters`): `legacy_bids_asks_to_wide`, `bybit_snapshots_to_wide`, `wide_to_legacy_lists`.
+## Canonical L2 format
 
-CLI: from the Modeller directory, convert Bybit orderbook JSON to wide CSV (auto depth, auto-detect format from `.json`):
+Backtests read only wide L2 CSV files.
+
+Required columns:
+
+- `time` or `ts`
+- `symbol`
+- `ask_price_1`, `ask_size_1`, `bid_price_1`, `bid_size_1`
+- the same pattern for deeper levels: `..._2`, `..._3`, and so on
+
+Optional notes:
+
+- if a CSV contains multiple symbols, set `data.symbol` in config
+- missing levels should be `NaN`
+- trades CSV, when used, must contain `ts`, `price`, `size`, `side`
+
+## Config-driven runs
+
+The default config file is `backtest_config.json`.
+There is also a ready-to-load example: `backtest_config.example.json`.
+
+Minimal launch:
+
+```bash
+python run_backtest.py
+```
+
+Use another config:
+
+```bash
+python run_backtest.py --config path/to/my_backtest.json
+python run_backtest_dash.py --config path/to/my_backtest.json
+python run_backtest.py --config backtest_config.example.json
+```
+
+Config structure:
+
+```json
+{
+  "data": {
+    "l2_path": "test_data/test.csv",
+    "trades_path": null,
+    "symbol": null
+  },
+  "strategy": {
+    "name": "mm",
+    "mm": { "spread": 1.0, "quote_size": 1.0 },
+    "taker": {
+      "window": 20,
+      "std_mult": 2.0,
+      "qty": 1.0,
+      "cooldown": 0.0,
+      "max_position": 1.0
+    },
+    "ema": {
+      "fast": 10,
+      "slow": 30,
+      "qty": 1.0,
+      "max_position": 1.0,
+      "offset": 0.0
+    },
+    "imbalance": {
+      "depth": 5,
+      "threshold": 0.3,
+      "smoothing": 3,
+      "qty": 1.0,
+      "max_position": 1.0
+    }
+  },
+  "dashboard": {
+    "host": "127.0.0.1",
+    "port": 860,
+    "debug": false
+  },
+  "console": {
+    "level": 1,
+    "book_levels": 1
+  }
+}
+```
+
+If some strategy fields are omitted, code defaults are used automatically.
+
+Console output modes:
+
+- `console.level = 1` keeps the compact summary output
+- `console.level = 2` prints every strategy action to console
+- `console.level = 3` includes strategy actions plus fills, position, cash and equity
+- `console.book_levels` controls how many bid/ask levels are printed for each action
+
+## Bybit pipeline example
+
+1. Record raw orderbook:
+
+```bash
+python recorder_bybit.py --symbol BTCUSDT --duration 1800
+```
+
+2. Convert raw JSON to wide CSV:
 
 ```bash
 python convert_l2_to_wide.py -i test_data/bybit_custom_loader/orderbook_BTCUSDT_spot_2026-03-04.json -o orderbook_BTCUSDT_wide.csv
 ```
 
-Legacy `ts`+`bids`+`asks` file:
+3. Point `data.l2_path` in config to the generated CSV and run:
 
 ```bash
-python convert_l2_to_wide.py --format legacy -i path/to/l2.csv -o out_wide.csv --symbol BTCUSDT
+python run_backtest.py --config backtest_config.json
 ```
-
-2. `trades` (optional):
-- required columns: `ts`, `price`, `size`, `side`
-- `side` is `buyer_initiated` or `seller_initiated`
-
-Assumption:
-- snapshots are full L2 replacements (book is overwritten by each snapshot)
-- no incremental book deltas are required
-
-## Architecture
-
-1. `sim/core`: event definitions and replay engine
-2. `sim/data`: loaders and stream merge/normalization
-3. `sim/market`: `OrderBookL2` state model (no fill logic)
-4. `sim/execution`: fill model interface + `Touch` and `Queue` implementations
-5. `sim/exchange`: simulated exchange, order lifecycle, fees
-6. `sim/portfolio`: portfolio accounting and metrics
-7. `sim/strategy`: strategy interface, basic MM, and taker Bollinger strategy
-
-## Event ordering
-
-`merge_streams(...)` guarantees deterministic ordering by:
-1. `ts`
-2. event type priority: `snapshot -> trade -> timer`
-3. stable sequence index inside each type
-
-## Project layout
-
-```text
-sim/
-  core/
-  data/
-  market/
-  exchange/
-  execution/
-  strategy/
-  portfolio/
-  tests/
-run_backtest.py
-README.md
-```
-
-## Run tests
-
-```bash
-pytest -q
-```
-
-## Minimal run
-
-```bash
-python run_backtest.py --l2 path/to/l2.csv
-```
-
-Wide L2 example:
-
-```bash
-python run_backtest.py --loader wide --l2 path/to/l2_wide.csv --symbol BTCUSDT
-```
-
-(`--symbol` is only required when the wide file contains multiple symbols.)
-
-Optional trades merge:
-
-```bash
-python run_backtest.py --l2 path/to/l2.csv --trades path/to/trades.csv
-```
-
-`run_backtest.py` is headless and contains no visualization dependencies.
-
-## Strategy selection
-
-Default strategy is market maker (`mm`).
-
-```bash
-python run_backtest.py --l2 path/to/l2.csv --strategy mm --mm-spread 1.0 --mm-quote-size 1.0
-```
-
-Taker Bollinger breakout/revert example:
-
-```bash
-python run_backtest.py --l2 path/to/l2.csv --strategy taker --taker-window 20 --taker-std-mult 2.0 --taker-qty 1.0 --taker-cooldown 5 --taker-max-position 1.0
-```
-
-`taker` uses market-only orders with Bollinger breakout entries and mean-revert exit/reverse logic.
-Risk controls:
-- `--taker-cooldown`: seconds between new entries from flat
-- `--taker-max-position`: max absolute position cap
 
 ## Optional Dash visualization
 
@@ -131,34 +143,16 @@ Install optional UI dependencies:
 pip install dash plotly
 ```
 
-Run the simulator with a Dash dashboard:
+Then run:
 
 ```bash
-python run_backtest_dash.py --l2 path/to/l2.csv --strategy taker
+python run_backtest_dash.py
 ```
 
-Dashboard includes:
-- run form with strategy and loader parameters
-- `Equity` tab with equity curve
-- `Stats` tab with key performance numbers
-- `Fills` tab with executed fills table
+The UI uses the same config model and reads the same wide CSV files.
 
-Architecture note:
-- simulation core works independently from visualization
-- Dash app consumes `MetricsCollector` output as an optional adapter layer
-
-## Bybit custom loader example
+## Tests
 
 ```bash
-python run_backtest.py ^
-  --loader bybit ^
-  --l2 test_data/bybit_custom_loader/orderbook_BTCUSDT_spot_2026-03-04.json ^
-  --trades test_data/bybit_custom_loader/trades_BTCUSDT_spot_2026-03-04.json ^
-  --strategy taker
-```
-
-`test_data` loader mode resolves files inside project `test_data` automatically:
-
-```bash
-python run_backtest.py --loader test_data --l2 orderbook_BTCUSDT_spot_2026-03-04.json --strategy taker
+pytest -q
 ```

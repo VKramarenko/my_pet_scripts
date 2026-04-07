@@ -237,23 +237,11 @@ def create_dash_app(
                         placeholder="Path to trades file (optional)",
                         style={"width": "100%", "marginBottom": "8px"},
                     ),
-                    dcc.Dropdown(
-                        id="loader-input",
-                        options=[
-                            {"label": "default", "value": "default"},
-                            {"label": "bybit", "value": "bybit"},
-                            {"label": "test_data", "value": "test_data"},
-                            {"label": "wide", "value": "wide"},
-                        ],
-                        value=initial_form["loader"],
-                        clearable=False,
-                        style={"marginBottom": "8px"},
-                    ),
                     dcc.Input(
                         id="symbol-input",
                         value=initial_form.get("symbol") or "",
                         type="text",
-                        placeholder="Symbol filter (wide loader, optional)",
+                        placeholder="Symbol filter (optional for multi-symbol CSV)",
                         style={"width": "100%", "marginBottom": "8px"},
                     ),
                     dcc.Dropdown(
@@ -261,6 +249,8 @@ def create_dash_app(
                         options=[
                             {"label": "mm", "value": "mm"},
                             {"label": "taker", "value": "taker"},
+                            {"label": "ema", "value": "ema"},
+                            {"label": "imbalance", "value": "imbalance"},
                         ],
                         value=initial_form["strategy"],
                         clearable=False,
@@ -365,6 +355,146 @@ def create_dash_app(
                         ],
                         style={"display": "flex", "gap": "8px", "marginBottom": "8px"},
                     ),
+                    html.Div(
+                        [
+                            html.Div(
+                                [
+                                    html.Label("EMA fast"),
+                                    dcc.Input(
+                                        id="ema-fast-input",
+                                        value=initial_form["ema_fast"],
+                                        type="number",
+                                        style={"width": "100%"},
+                                    ),
+                                ],
+                                style={"flex": "1"},
+                            ),
+                            html.Div(
+                                [
+                                    html.Label("EMA slow"),
+                                    dcc.Input(
+                                        id="ema-slow-input",
+                                        value=initial_form["ema_slow"],
+                                        type="number",
+                                        style={"width": "100%"},
+                                    ),
+                                ],
+                                style={"flex": "1"},
+                            ),
+                            html.Div(
+                                [
+                                    html.Label("EMA qty"),
+                                    dcc.Input(
+                                        id="ema-qty-input",
+                                        value=initial_form["ema_qty"],
+                                        type="number",
+                                        style={"width": "100%"},
+                                    ),
+                                ],
+                                style={"flex": "1"},
+                            ),
+                        ],
+                        style={"display": "flex", "gap": "8px", "marginBottom": "8px"},
+                    ),
+                    html.Div(
+                        [
+                            html.Div(
+                                [
+                                    html.Label("EMA max position"),
+                                    dcc.Input(
+                                        id="ema-max-position-input",
+                                        value=initial_form["ema_max_position"],
+                                        type="number",
+                                        style={"width": "100%"},
+                                    ),
+                                ],
+                                style={"flex": "1"},
+                            ),
+                            html.Div(
+                                [
+                                    html.Label("EMA offset"),
+                                    dcc.Input(
+                                        id="ema-offset-input",
+                                        value=initial_form["ema_offset"],
+                                        type="number",
+                                        style={"width": "100%"},
+                                    ),
+                                ],
+                                style={"flex": "1"},
+                            ),
+                        ],
+                        style={"display": "flex", "gap": "8px", "marginBottom": "8px"},
+                    ),
+                    html.Div(
+                        [
+                            html.Div(
+                                [
+                                    html.Label("Imbalance depth"),
+                                    dcc.Input(
+                                        id="imb-depth-input",
+                                        value=initial_form["imb_depth"],
+                                        type="number",
+                                        style={"width": "100%"},
+                                    ),
+                                ],
+                                style={"flex": "1"},
+                            ),
+                            html.Div(
+                                [
+                                    html.Label("Imbalance threshold"),
+                                    dcc.Input(
+                                        id="imb-threshold-input",
+                                        value=initial_form["imb_threshold"],
+                                        type="number",
+                                        style={"width": "100%"},
+                                    ),
+                                ],
+                                style={"flex": "1"},
+                            ),
+                            html.Div(
+                                [
+                                    html.Label("Imbalance smoothing"),
+                                    dcc.Input(
+                                        id="imb-smoothing-input",
+                                        value=initial_form["imb_smoothing"],
+                                        type="number",
+                                        style={"width": "100%"},
+                                    ),
+                                ],
+                                style={"flex": "1"},
+                            ),
+                        ],
+                        style={"display": "flex", "gap": "8px", "marginBottom": "8px"},
+                    ),
+                    html.Div(
+                        [
+                            html.Div(
+                                [
+                                    html.Label("Imbalance qty"),
+                                    dcc.Input(
+                                        id="imb-qty-input",
+                                        value=initial_form["imb_qty"],
+                                        type="number",
+                                        style={"width": "100%"},
+                                    ),
+                                ],
+                                style={"flex": "1"},
+                            ),
+                            html.Div(
+                                [
+                                    html.Label("Imbalance max position"),
+                                    dcc.Input(
+                                        id="imb-max-position-input",
+                                        value=initial_form["imb_max_position"],
+                                        type="number",
+                                        style={"width": "100%"},
+                                    ),
+                                ],
+                                style={"flex": "1"},
+                            ),
+                        ],
+                        style={"display": "flex", "gap": "8px", "marginBottom": "8px"},
+                    ),
                     html.Button("Run", id="run-button", n_clicks=0),
                     html.Div(
                         id="run-status",
@@ -434,7 +564,6 @@ def create_dash_app(
         Input("run-button", "n_clicks"),
         State("l2-input", "value"),
         State("trades-input", "value"),
-        State("loader-input", "value"),
         State("symbol-input", "value"),
         State("strategy-input", "value"),
         State("mm-spread-input", "value"),
@@ -444,13 +573,22 @@ def create_dash_app(
         State("taker-qty-input", "value"),
         State("taker-cooldown-input", "value"),
         State("taker-max-position-input", "value"),
+        State("ema-fast-input", "value"),
+        State("ema-slow-input", "value"),
+        State("ema-qty-input", "value"),
+        State("ema-max-position-input", "value"),
+        State("ema-offset-input", "value"),
+        State("imb-depth-input", "value"),
+        State("imb-threshold-input", "value"),
+        State("imb-smoothing-input", "value"),
+        State("imb-qty-input", "value"),
+        State("imb-max-position-input", "value"),
         prevent_initial_call=True,
     )
     def _run_callback(
         _n_clicks: int,
         l2: str,
         trades: str | None,
-        loader: str,
         symbol_filter: str | None,
         strategy: str,
         mm_spread: float,
@@ -460,11 +598,20 @@ def create_dash_app(
         taker_qty: float,
         taker_cooldown: float,
         taker_max_position: float,
+        ema_fast: int,
+        ema_slow: int,
+        ema_qty: float,
+        ema_max_position: float,
+        ema_offset: float,
+        imb_depth: int,
+        imb_threshold: float,
+        imb_smoothing: int,
+        imb_qty: float,
+        imb_max_position: float,
     ):
         form = {
             "l2": l2 or "",
             "trades": trades or None,
-            "loader": loader,
             "symbol": symbol_filter or None,
             "strategy": strategy,
             "mm_spread": float(mm_spread),
@@ -474,6 +621,16 @@ def create_dash_app(
             "taker_qty": float(taker_qty),
             "taker_cooldown": float(taker_cooldown),
             "taker_max_position": float(taker_max_position),
+            "ema_fast": int(ema_fast),
+            "ema_slow": int(ema_slow),
+            "ema_qty": float(ema_qty),
+            "ema_max_position": float(ema_max_position),
+            "ema_offset": float(ema_offset),
+            "imb_depth": int(imb_depth),
+            "imb_threshold": float(imb_threshold),
+            "imb_smoothing": int(imb_smoothing),
+            "imb_qty": float(imb_qty),
+            "imb_max_position": float(imb_max_position),
         }
         try:
             metrics = run_backtest(form)

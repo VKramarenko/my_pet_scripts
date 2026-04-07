@@ -11,9 +11,9 @@ from sim.strategy.taker_bollinger import TakerBollingerStrategy
 
 def _write_l2_csv(path: Path) -> None:
     path.write_text(
-        "ts,bids,asks\n"
-        '1.0,"[[100.0, 2.0]]","[[101.0, 2.0]]"\n'
-        '2.0,"[[101.0, 2.0]]","[[102.0, 2.0]]"\n',
+        "time,symbol,ask_price_1,bid_price_1,ask_size_1,bid_size_1\n"
+        "1.0,TEST,101.0,100.0,2.0,2.0\n"
+        "2.0,TEST,102.0,101.0,2.0,2.0\n",
         encoding="utf-8",
     )
 
@@ -22,7 +22,7 @@ def test_run_snapshots_only_smoke(tmp_path: Path) -> None:
     l2_path = tmp_path / "l2.csv"
     _write_l2_csv(l2_path)
 
-    metrics = run(str(l2_path), trades_path=None, loader="default")
+    metrics = run(str(l2_path), trades_path=None)
 
     assert metrics.num_fills >= 0
     assert len(metrics.equity_curve) > 0
