@@ -67,11 +67,19 @@ def apply_trade_to_strategy_state(
         state.last_trade_step_index = step_index
     update_metrics_after_trade(state.metrics, trade)
 
+    # Keep per-instrument positions in sync
+    state.positions[trade.instrument_id] = state.positions.get(trade.instrument_id, 0.0) + signed_qty
+    if trade.instrument_id == "default":
+        # state.position is the authoritative value for "default" (computed via complex logic above);
+        # override the accumulation to avoid any rounding drift and keep both in sync
+        state.positions["default"] = state.position
+
 
 def mark_strategy_to_market(
     state: StrategyState,
     snapshot: Snapshot,
     *,
+    instrument_id: str = "default",
     missing_policy: str = "keep_last",
 ) -> None:
     mid = compute_mid_price(snapshot)
@@ -82,15 +90,35 @@ def mark_strategy_to_market(
             update_metrics_after_valuation(state.metrics, snapshot.timestamp, state.equity, state.realized_pnl)
         elif missing_policy == "none":
             return
-        elif missing_policy == "keep_last" and state.last_mid_price is not None:
-            mid = state.last_mid_price
+        elif missing_policy == "keep_last":
+            mid = state.last_mid_prices.get(instrument_id) or state.last_mid_price
+            if mid is None:
+                return
         else:
             return
 
-    state.last_mid_price = mid
-    if state.position == 0 or state.avg_entry_price is None:
-        state.unrealized_pnl = 0.0
-    else:
-        state.unrealized_pnl = state.position * (mid - state.avg_entry_price)
-    state.equity = state.cash + state.position * mid
+    state.last_mid_prices[instrument_id] = mid
+    if instrument_id == "default":
+        state.last_mid_price = mid
+
+    # Per-instrument unrealized PnL (only tracked for "default" for backward compat)
+    if instrument_id == "default":
+        if state.position == 0 or state.avg_entry_price is None:
+            state.unrealized_pnl = 0.0
+        else:
+            state.unrealized_pnl = state.position * (mid - state.avg_entry_price)
+
+    # Equity = cash + sum of (position × mid) across all known instruments
+    equity = state.cash
+    for iid, pos in state.positions.items():
+        iid_mid = state.last_mid_prices.get(iid)
+        if iid_mid is not None and pos != 0:
+            equity += pos * iid_mid
+    # Also include "default" position if not already in positions dict
+    if "default" not in state.positions and state.position != 0:
+        default_mid = state.last_mid_prices.get("default") or state.last_mid_price
+        if default_mid is not None:
+            equity += state.position * default_mid
+
+    state.equity = equity
     update_metrics_after_valuation(state.metrics, snapshot.timestamp, state.equity, state.realized_pnl)

@@ -32,6 +32,10 @@ class BaseStrategy(ABC):
     def on_snapshot(self, context: StrategyContext) -> list[BaseAction]:
         raise NotImplementedError
 
+    def on_custom_event(self, context: StrategyContext) -> list[BaseAction]:
+        """Called for CustomEvent or TimerEvent. Returns [] by default."""
+        return []
+
     def on_simulation_end(self) -> None:
         return None
 

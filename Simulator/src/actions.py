@@ -19,6 +19,7 @@ class PlaceOrderAction(BaseAction):
     price: float
     qty: float
     order_type: OrderType
+    instrument_id: str = "default"
     client_order_id: str | None = None
     action_type: ActionType = field(init=False, default=ActionType.PLACE_ORDER)
 

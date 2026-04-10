@@ -19,6 +19,7 @@ class ExecutionFillRecord:
     trade_id: str
     order_id: str
     strategy_id: str
+    instrument_id: str
     timestamp: str
     side: str
     qty: float
@@ -33,6 +34,7 @@ class ExecutionFillRecord:
 class ExecutionOrderRecord:
     order_id: str
     strategy_id: str
+    instrument_id: str
     side: str
     order_type: str
     submitted_at: str
@@ -136,6 +138,7 @@ def build_execution_report(
             ExecutionOrderRecord(
                 order_id=order.order_id,
                 strategy_id=order.strategy_id,
+                instrument_id=order.instrument_id,
                 side=order.side.value,
                 order_type=order.order_type.value,
                 submitted_at=order.created_at.isoformat(),
@@ -160,6 +163,7 @@ def build_execution_report(
             trade_id=trade.trade_id,
             order_id=trade.order_id,
             strategy_id=trade.strategy_id,
+            instrument_id=trade.instrument_id,
             timestamp=trade.timestamp.isoformat(),
             side=trade.side.value,
             qty=trade.qty,
@@ -245,6 +249,7 @@ def write_execution_orders_csv(report: ExecutionReport, path: str | Path) -> Pat
         writer = csv.DictWriter(handle, fieldnames=list(asdict(report.orders[0]).keys()) if report.orders else list(asdict(ExecutionOrderRecord(
             order_id="",
             strategy_id="",
+            instrument_id="",
             side="",
             order_type="",
             submitted_at="",
@@ -276,6 +281,7 @@ def write_execution_fills_csv(report: ExecutionReport, path: str | Path) -> Path
             trade_id="",
             order_id="",
             strategy_id="",
+            instrument_id="",
             timestamp="",
             side="",
             qty=0.0,

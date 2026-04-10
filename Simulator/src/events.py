@@ -23,6 +23,10 @@ class MarketSnapshotEvent(BaseEvent):
     def __post_init__(self) -> None:
         self.timestamp = self.snapshot.timestamp
 
+    @property
+    def instrument_id(self) -> str:
+        return self.snapshot.instrument_id
+
 
 @dataclass(slots=True)
 class OrderUpdateEvent(BaseEvent):
@@ -49,4 +53,21 @@ class OwnTradeEvent(BaseEvent):
 
     def __post_init__(self) -> None:
         self.timestamp = self.trade.timestamp
+
+
+@dataclass(slots=True)
+class CustomEvent(BaseEvent):
+    """Arbitrary user-defined event, not tied to any order book."""
+
+    name: str
+    payload: dict = field(default_factory=dict)
+    event_type: EventType = field(init=False, default=EventType.CUSTOM)
+
+
+@dataclass(slots=True)
+class TimerEvent(BaseEvent):
+    """Timer event fired on a schedule."""
+
+    name: str
+    event_type: EventType = field(init=False, default=EventType.TIMER)
 

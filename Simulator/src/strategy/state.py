@@ -25,6 +25,8 @@ class StrategyState:
     last_mid_price: float | None = None
     last_trade_step_index: int | None = None
     metrics: StrategyMetrics = field(default_factory=StrategyMetrics)
+    positions: dict[str, float] = field(default_factory=dict)        # position per instrument_id
+    last_mid_prices: dict[str, float] = field(default_factory=dict)  # last mid price per instrument_id
 
     def reset(self) -> None:
         self.orders.clear()
@@ -39,6 +41,8 @@ class StrategyState:
         self.last_mid_price = None
         self.last_trade_step_index = None
         self.metrics = StrategyMetrics()
+        self.positions.clear()
+        self.last_mid_prices.clear()
 
     def apply_order_update(self, event: OrderUpdateEvent) -> None:
         existing = self.orders.get(event.order_id)

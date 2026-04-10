@@ -254,9 +254,11 @@ def parse_snapshot_row(
         )
         for level in range(1, config.depth + 1)
     ]
+    instrument_id = str(row.get("symbol", "") or "").strip() or "default"
     return Snapshot(
         timestamp=timestamp,
         asks=asks,
         bids=bids,
+        instrument_id=instrument_id,
         validate_crossed_book=config.validate_crossed_book,
     )

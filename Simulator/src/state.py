@@ -12,6 +12,7 @@ class SimulationState:
     """Mutable simulation state owned by the engine."""
 
     current_snapshot: Snapshot | None = None
+    current_snapshots: dict[str, Snapshot] = field(default_factory=dict)
     active_orders: dict[str, Order] = field(default_factory=dict)
     completed_orders: dict[str, Order] = field(default_factory=dict)
     trades: list[Trade] = field(default_factory=list)
@@ -19,6 +20,12 @@ class SimulationState:
     current_time: datetime | None = None
     order_sequence: int = 0
     trade_sequence: int = 0
+
+    def update_snapshot(self, snapshot: Snapshot) -> None:
+        """Update snapshot for an instrument. Keeps legacy current_snapshot in sync."""
+        self.current_snapshots[snapshot.instrument_id] = snapshot
+        self.current_snapshot = snapshot
+        self.current_time = snapshot.timestamp
 
     def register_order(self, order: Order) -> None:
         if order.is_done():

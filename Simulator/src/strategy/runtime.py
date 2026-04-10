@@ -7,6 +7,7 @@ from src.strategy.examples.buy_once import PassiveBuyOnceStrategy
 from src.strategy.examples.moving_average_cross import MovingAverageCrossStrategy
 from src.strategy.examples.rsi_limit_order_template import RSILimitOrderTemplateStrategy
 from src.strategy.examples.rsi_limit_order_timeout import RSILimitOrderTimeoutStrategy
+from src.strategy.examples.rsi_dual_book_timeout import RSIDualBookTimeoutStrategy
 from src.strategy.examples.rsi_mean_reversion import RSIMeanReversionStrategy
 
 
@@ -42,6 +43,11 @@ STRATEGY_REGISTRY: dict[str, StrategySpec] = {
         name="moving_average_cross",
         description="Trades on short/long moving average crossovers.",
         builder=MovingAverageCrossStrategy,
+    ),
+    "rsi_dual_book_timeout": StrategySpec(
+        name="rsi_dual_book_timeout",
+        description="RSI limit-order strategy that trades independently in multiple books with stale-order cancellation.",
+        builder=RSIDualBookTimeoutStrategy,
     ),
 }
 

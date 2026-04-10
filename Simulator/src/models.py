@@ -27,6 +27,7 @@ class Snapshot:
     timestamp: datetime
     asks: list[Level]
     bids: list[Level]
+    instrument_id: str = "default"
     validate_crossed_book: bool = field(default=True, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -70,6 +71,7 @@ class Order:
     status: OrderStatus
     created_at: datetime
     updated_at: datetime | None = None
+    instrument_id: str = "default"
 
     def __post_init__(self) -> None:
         if self.price <= 0:
@@ -109,6 +111,7 @@ class Trade:
     raw_price: float | None = None
     commission: float = 0.0
     notional: float | None = None
+    instrument_id: str = "default"
 
     def __post_init__(self) -> None:
         if self.price <= 0:
