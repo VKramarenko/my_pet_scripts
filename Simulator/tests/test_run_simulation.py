@@ -66,6 +66,74 @@ def test_run_simulation_with_moving_average_strategy_prints_summary(tmp_path, ca
     assert "strategy=MovingAverageCrossStrategy" in captured.out
 
 
+def test_run_simulation_with_rsi_limit_timeout_strategy_prints_summary(tmp_path, capsys) -> None:
+    csv_path = tmp_path / "book.csv"
+    csv_path.write_text(
+        "time,ask_price_1,bid_price_1,ask_size_1,bid_size_1\n"
+        "2024-01-01T10:00:00,101,100,1,1\n"
+        "2024-01-01T10:00:01,100,99,1,1\n"
+        "2024-01-01T10:00:02,99,98,1,1\n"
+        "2024-01-01T10:00:03,98,97,1,1\n"
+        "2024-01-01T10:00:09,103,102,1,1\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--csv",
+            str(csv_path),
+            "--strategy",
+            "rsi_limit_order_timeout",
+            "--rsi-period",
+            "3",
+            "--oversold",
+            "35",
+            "--qty",
+            "1",
+            "--order-ttl-seconds",
+            "5",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "strategy=RSILimitOrderTimeoutStrategy" in captured.out
+
+
+def test_run_simulation_with_rsi_limit_template_strategy_prints_summary(tmp_path, capsys) -> None:
+    csv_path = tmp_path / "book.csv"
+    csv_path.write_text(
+        "time,ask_price_1,bid_price_1,ask_size_1,bid_size_1\n"
+        "2024-01-01T10:00:00,101,100,1,1\n"
+        "2024-01-01T10:00:01,100,99,1,1\n"
+        "2024-01-01T10:00:02,99,98,1,1\n"
+        "2024-01-01T10:00:03,98,97,1,1\n"
+        "2024-01-01T10:00:09,103,102,1,1\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--csv",
+            str(csv_path),
+            "--strategy",
+            "rsi_limit_order_template",
+            "--rsi-period",
+            "3",
+            "--oversold",
+            "35",
+            "--qty",
+            "1",
+            "--order-ttl-seconds",
+            "5",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "strategy=RSILimitOrderTemplateStrategy" in captured.out
+
+
 def test_run_simulation_can_export_execution_report_files(tmp_path, capsys) -> None:
     csv_path = tmp_path / "book.csv"
     json_path = tmp_path / "execution_report.json"

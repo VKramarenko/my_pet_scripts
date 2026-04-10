@@ -4,13 +4,18 @@
 
 ## Где лежат примеры стратегий
 
-После реорганизации примерные стратегии вынесены в отдельный пакет:
+Каждая стратегия живёт в своём файле внутри пакета `src/strategy/examples/`:
 
-- `src/strategy/examples/buy_once.py`
-- `src/strategy/examples/technical.py`
-- `src/strategy/examples/__init__.py`
+- `src/strategy/examples/buy_once.py` — `PassiveBuyOnceStrategy`
+- `src/strategy/examples/rsi_mean_reversion.py` — `RSIMeanReversionStrategy`
+- `src/strategy/examples/rsi_limit_order_timeout.py` — `RSILimitOrderTimeoutStrategy`
+- `src/strategy/examples/rsi_limit_order_template.py` — `RSILimitOrderTemplateStrategy`
+- `src/strategy/examples/moving_average_cross.py` — `MovingAverageCrossStrategy`
+- `src/strategy/examples/indicators.py` — общие индикаторы (`compute_rsi`)
 
 Базовый контракт стратегии остаётся отдельно в `src/strategy/base.py`.
+
+Чтобы добавить новую стратегию: создать новый файл в `src/strategy/examples/` и зарегистрировать её в `src/strategy/runtime.py`.
 
 ## 1. Базовый запуск RSI-стратегии
 
@@ -76,4 +81,22 @@ python .\view_execution_dash.py --csv ..\Modeller\test_data\test.csv --depth 5 -
 
 ```powershell
 python -m pip install dash plotly
+```
+
+## 12. RSI passive limit with timeout cancel
+
+```powershell
+python .\run_simulation.py --csv ..\Modeller\test_data\test.csv --strategy rsi_limit_order_timeout --rsi-period 14 --oversold 30 --overbought 70 --qty 1 --order-ttl-seconds 5
+```
+
+## 13. RSI passive limit with timeout cancel and execution report
+
+```powershell
+python .\run_simulation.py --csv ..\Modeller\test_data\test.csv --strategy rsi_limit_order_timeout --rsi-period 14 --oversold 30 --overbought 70 --qty 1 --order-ttl-seconds 5 --execution-report-json .\artifacts\execution_report.json --execution-orders-csv .\artifacts\execution_orders.csv --execution-fills-csv .\artifacts\execution_fills.csv
+```
+
+## 14. RSI template strategy with place/wait/cancel flow
+
+```powershell
+python .\run_simulation.py --csv ..\Modeller\test_data\test.csv --strategy rsi_limit_order_template --rsi-period 14 --oversold 30 --overbought 70 --qty 1 --order-ttl-seconds 5
 ```

@@ -4,7 +4,10 @@ from dataclasses import dataclass
 
 from src.strategy.base import BaseStrategy
 from src.strategy.examples.buy_once import PassiveBuyOnceStrategy
-from src.strategy.examples.technical import MovingAverageCrossStrategy, RSIMeanReversionStrategy
+from src.strategy.examples.moving_average_cross import MovingAverageCrossStrategy
+from src.strategy.examples.rsi_limit_order_template import RSILimitOrderTemplateStrategy
+from src.strategy.examples.rsi_limit_order_timeout import RSILimitOrderTimeoutStrategy
+from src.strategy.examples.rsi_mean_reversion import RSIMeanReversionStrategy
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +27,16 @@ STRATEGY_REGISTRY: dict[str, StrategySpec] = {
         name="rsi_mean_reversion",
         description="Buys on oversold RSI and exits on overbought RSI.",
         builder=RSIMeanReversionStrategy,
+    ),
+    "rsi_limit_order_timeout": StrategySpec(
+        name="rsi_limit_order_timeout",
+        description="Places passive RSI limit orders and cancels stale orders after a TTL.",
+        builder=RSILimitOrderTimeoutStrategy,
+    ),
+    "rsi_limit_order_template": StrategySpec(
+        name="rsi_limit_order_template",
+        description="Educational RSI strategy showing passive limit order lifecycle handling.",
+        builder=RSILimitOrderTemplateStrategy,
     ),
     "moving_average_cross": StrategySpec(
         name="moving_average_cross",

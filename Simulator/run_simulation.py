@@ -68,6 +68,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rsi-period", type=int, default=14)
     parser.add_argument("--oversold", type=float, default=30.0)
     parser.add_argument("--overbought", type=float, default=70.0)
+    parser.add_argument("--order-ttl-seconds", type=float, default=5.0)
 
     parser.add_argument("--short-window", type=int, default=3)
     parser.add_argument("--long-window", type=int, default=5)
@@ -107,6 +108,7 @@ def build_strategy_config(args: argparse.Namespace) -> dict:
         "rsi_period": args.rsi_period,
         "oversold": args.oversold,
         "overbought": args.overbought,
+        "order_ttl_seconds": args.order_ttl_seconds,
         "short_window": args.short_window,
         "long_window": args.long_window,
     }
